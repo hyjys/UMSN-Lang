@@ -42,7 +42,7 @@ print(인사("엄슨"))
 | **`pyumsn`** (명령줄) | `run` / `topy` / `toumsn` / `check` / `ide` / `repl` / `words` |
 | **UMSN-IDE** | **엄슨 언어로 작성된** Tkinter IDE ([`pyumsn/ide/umsn_ide.umsn`](pyumsn/ide/umsn_ide.umsn)) |
 
-윈도우와 리눅스를 지원합니다 (파이썬 3.11 이상).
+윈도우와 리눅스를 지원합니다 (파이썬 3.11 ~ 3.14).
 
 ## 설치
 
@@ -157,6 +157,7 @@ pyumsn words --markdown             # 전체 단어장 (docs/VOCABULARY.md)
 | `날"\d+"` | `r"\d+"` |
 | `바"..."` / `유"..."` | `b"..."` / `u"..."` |
 | `형날"..."`, `날바"..."`, `대형"..."` | `fr"..."`, `rb"..."`, `F"..."` |
+| `템"안녕 {이름}"` | `t"안녕 {이름}"` (파이썬 3.14 템플릿 문자열) |
 
 ### 5. UTF-8 전용
 
