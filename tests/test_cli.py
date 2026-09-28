@@ -87,8 +87,7 @@ def test_python_syntax_error_reported(tmp_path):
     assert res.returncode == 1
     assert "1줄 8칸" in stderr
     assert "어엄슨 엄슨참" in stderr
-    if sys.version_info >= (3, 10):  # 옛 파이썬은 그냥 "invalid syntax"
-        assert "..한" in stderr
+    assert "..한" in stderr
 
 
 def test_temp_file_removed_and_keep():
