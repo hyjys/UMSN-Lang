@@ -1,0 +1,80 @@
+name: Publish
+
+# GitHub Release 를 발행하면 PyPI 에, 수동 실행하면 고른 곳(TestPyPI/PyPI)에 올린다.
+# PyPI 쪽에 Trusted Publisher 를 등록해야 한다 (README 의 "PyPI 배포" 참고).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "올릴 곳"
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 테스트
+        run: |
+          python -m pip install -e ".[test]"
+          python -m pytest -q
+      - name: 릴리스 태그와 버전 확인
+        if: github.event_name == 'release'
+        run: |
+          version=$(python -c "import pyumsn; print(pyumsn.__version__)")
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "태그 ${GITHUB_REF_NAME} 가 패키지 버전 v${version} 과 다릅니다" >&2
+            exit 1
+          fi
+      - name: 빌드
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/PyUMSN
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    needs: build
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/PyUMSN
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

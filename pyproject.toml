@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,6 +8,9 @@ dynamic = ["version"]
 description = "엄슨(UMSN) 프로그래밍 언어 — 엄슨 ↔ 파이썬 변환기, 실행기, UMSN-IDE"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "hyjys" }]
 keywords = ["umsn", "엄슨", "esolang", "korean", "programming-language", "transpiler"]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -22,9 +25,15 @@ classifiers = [
     "Topic :: Education",
 ]
 
+[project.urls]
+Homepage = "https://github.com/hyjys/UMSN-Lang"
+Source = "https://github.com/hyjys/UMSN-Lang"
+Issues = "https://github.com/hyjys/UMSN-Lang/issues"
+
 [project.optional-dependencies]
 libs = ["numpy", "pandas", "matplotlib"]
 test = ["pytest"]
+release = ["build", "twine"]
 
 [project.scripts]
 pyumsn = "pyumsn.cli:main"

@@ -31,7 +31,7 @@ for 번호 in range(1, 4):
 print(인사("엄슨"))
 ```
 
-![UMSN-IDE](docs/umsn-ide.png)
+![UMSN-IDE](https://raw.githubusercontent.com/hyjys/UMSN-Lang/main/docs/umsn-ide.png)
 
 ## 구성
 
@@ -47,10 +47,16 @@ print(인사("엄슨"))
 ## 설치
 
 ```bash
+pip install PyUMSN            # PyPI 에서 (기본, 의존성 없음)
+pip install "PyUMSN[libs]"    # numpy, pandas, matplotlib 까지
+```
+
+소스에서 설치하려면:
+
+```bash
 git clone https://github.com/hyjys/UMSN-Lang.git
 cd UMSN-Lang
-pip install .                 # 기본 (의존성 없음)
-pip install ".[libs]"         # numpy, pandas, matplotlib 예제까지
+pip install .
 ```
 
 - IDE 와 Tkinter 예제에는 Tkinter 가 필요합니다. 윈도우용 파이썬에는 기본으로 들어 있고,
@@ -222,4 +228,17 @@ pip install -e ".[test]"
 python -m pytest
 ```
 
+### PyPI 배포
+
+1. `pyumsn/__init__.py` 의 `__version__` 을 올린다 (예: `1.0.1`). 같은 버전은 PyPI 에 다시 올릴 수 없다.
+2. `main` 에 병합한 뒤 GitHub 에서 **Release** 를 만든다. 태그는 `v` + 버전 (예: `v1.0.1`).
+3. `.github/workflows/publish.yml` 이 테스트 → 빌드 → PyPI 업로드를 자동으로 한다 (Trusted Publishing, 토큰 불필요).
+   TestPyPI 로 먼저 시험하려면 Actions 탭에서 **Publish** 워크플로를 수동 실행하고 `testpypi` 를 고른다.
+
+손으로 올릴 때는 `pip install -e ".[release]"`, `python -m build`, `twine check dist/*`, `twine upload dist/*`.
+
 IDE 의 한국어 입력(IME)은 운영체제의 Tk 지원에 따릅니다.
+
+## 라이선스
+
+[MIT License](LICENSE)
