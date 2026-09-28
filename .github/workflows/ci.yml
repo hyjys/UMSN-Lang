@@ -10,7 +10,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python: ["3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -28,12 +28,16 @@ jobs:
           pyumsn check examples/안녕.umsn pyumsn/ide/umsn_ide.umsn
 
   ide-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.14"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
       - name: Xvfb 설치
         run: sudo apt-get update && sudo apt-get install -y xvfb
       - name: 설치

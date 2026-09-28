@@ -49,6 +49,32 @@ def test_fstring_nested_same_quote():
     assert back == py
 
 
+def test_template_string_prefix():
+    um, back = roundtrip('x = t"안녕 {name!r:>10} {1 + 2 = }" + rt"{x}" + Tr"a"\n')
+    assert '템"안녕 {엄이름!r:>10} {1 + 2 = }"' in um
+    assert '날템"{외_엑}"' in um
+    assert '대템날"a"' in um
+    assert back == 'x = t"안녕 {name!r:>10} {1 + 2 = }" + rt"{x}" + Tr"a"\n'
+
+
+@pytest.mark.skipif(sys.version_info < (3, 14), reason="PEP 750 템플릿 문자열")
+def test_template_string_runs():
+    py = umsn_to_py('이름 ..은 "엄슨"\n틀 ..은 템"안녕 {이름}"\n')
+    scope = {}
+    exec(compile(py, "<템>", "exec"), scope)
+    assert type(scope["틀"]).__name__ == "Template"
+    assert scope["틀"].values == ("엄슨",)
+
+
+@pytest.mark.skipif(sys.version_info < (3, 14), reason="PEP 758")
+def test_except_without_parentheses():
+    py = "try:\n    1 / 0\nexcept ZeroDivisionError, ValueError:\n    pass\n"
+    um, back = roundtrip(py)
+    assert "엄슨예외 엄영나누기오류..고 엄값오류..한" in um
+    assert back == py
+    compile(back, "<758>", "exec")
+
+
 def test_string_prefixes():
     um, back = roundtrip("a = rb'\\d' + Rb'x'\nb = F'{1}'\nc = u'x'\n")
     assert "날바'\\d'" in um
