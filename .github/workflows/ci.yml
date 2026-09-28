@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.9", "3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: 설치
+        run: python -m pip install -e ".[test]"
+      - name: 테스트
+        run: python -m pytest -q
+      - name: 예제 실행
+        run: |
+          pyumsn run examples/구구단.umsn
+          pyumsn run examples/클래스.umsn
+          pyumsn check examples/안녕.umsn pyumsn/ide/umsn_ide.umsn
+
+  ide-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Xvfb 설치
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: 설치
+        run: python -m pip install -e .
+      - name: UMSN-IDE 기동 확인
+        shell: bash
+        run: |
+          set +e
+          timeout 10 xvfb-run -a pyumsn ide examples/구구단.umsn
+          code=$?
+          # 124 = 시간 초과까지 창이 살아 있었음 (정상)
+          test "$code" -eq 124
