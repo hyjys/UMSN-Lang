@@ -26,6 +26,7 @@ jobs:
           pyumsn examples/구구단.umsn
           pyumsn examples/클래스.umsn
           pyumsn -n examples pyumsn/ide/umsn_ide.umsn
+          pyumsn -m umsnumsn examples/구구단.umsn
 
   ide-smoke:
     strategy:

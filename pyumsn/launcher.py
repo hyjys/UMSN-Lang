@@ -1,12 +1,15 @@
 """하위 프로세스 진입점.
 
     python -X utf8 -m pyumsn.launcher <임시.py> <원본.umsn> [인자...]
+    python -X utf8 -m pyumsn.launcher -m <모듈> [인자...]
 
 임시 파이썬 파일을 원본 ``.umsn`` 파일 이름으로 컴파일해서 실행한다.
 변환 전후 줄 번호가 같으므로 오류 트레이스백이 엄슨 소스 줄을 그대로 보여준다.
 
 환경 변수 ``PYUMSN_SOURCE_NAME`` 이 있으면 ``<원본.umsn>`` 은 ``-c`` 코드나 표준 입력을 담은
 임시 파일이다. 읽자마자 지우고 그 이름(``<string>``, ``<stdin>``)으로 실행한다.
+
+``-m <모듈>`` 이면 ``python -m`` 처럼 (엄슨) 모듈이나 패키지의 ``__main__`` 을 실행한다.
 """
 
 import builtins
@@ -182,8 +185,55 @@ def _register_source(name, umsn_src):
     _MAPS[name] = PositionMap(umsn_src)
 
 
+def _run_module(name, args):
+    """``python -m`` 처럼 모듈을 ``__main__`` 으로 실행한다 (엄슨 모듈·패키지도 됨)."""
+    import importlib.util
+    import runpy
+    from .importer import install
+    sys.argv = [name] + list(args)
+    if sys.path and sys.path[0] in ("", os.getcwd()):
+        sys.path[0] = os.getcwd()
+    else:
+        sys.path.insert(0, os.getcwd())
+    install()
+    try:
+        try:
+            spec = None if not name or name.startswith(".") else importlib.util.find_spec(name)
+        except ModuleNotFoundError as exc:
+            if not exc.name or not (name + ".").startswith(exc.name + "."):
+                raise
+            spec = None
+        if spec is None:
+            sys.stderr.write("엄슨 오류! 모듈이 없슨: %s\n" % name)
+            return 1
+        runpy.run_module(name, run_name="__main__", alter_sys=True)
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        sys.stderr.write("\n엄슨 중단! (Ctrl+C)\n")
+        return 130
+    except BaseException as exc:  # noqa: B902
+        from .errors import UmsnError, UmsnSyntaxError
+        if isinstance(exc, UmsnSyntaxError):
+            sys.stderr.write(exc.report() + "\n")
+        elif isinstance(exc, UmsnError):
+            sys.stderr.write("엄슨 오류! %s\n" % exc)
+        else:
+            _report(exc)
+        return 1
+    finally:
+        try:
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            pass
+    return 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
+    if len(argv) >= 2 and argv[0] == "-m":
+        _setup_stdio()
+        return _run_module(argv[1], argv[2:])
     if len(argv) < 2:
         sys.stderr.write("사용법: python -m pyumsn.launcher <임시.py> <원본.umsn> [인자...]\n")
         return 2

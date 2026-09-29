@@ -39,6 +39,7 @@ print(인사("엄슨"))
 |---|---|
 | **엄슨 언어** (`.umsn`) | 파이썬의 예약어·내장 함수·메소드·문장부호를 엄슨 단어로 바꾼 언어 |
 | **PyUMSN** (`pip` 패키지, 모듈 `pyumsn`) | 엄슨 ↔ 파이썬 변환기, 실행기, import 지원, 대화형 셸 |
+| **UmsnUMSN** ([`umsnumsn/`](umsnumsn)) | **엄슨 언어로 된** 엄슨 구현체 — PyUMSN 을 `pyumsn -u` 로 바꾼 부트스트래핑 구현체 |
 | **`pyumsn`** (명령줄) | 유닉스식 옵션: 실행, `-t`/`-u` 변환, `-n` 검사, `-e` IDE, `-i` 셸, `-w` 단어장 |
 | **UMSN-IDE** | **엄슨 언어로 작성된** Tkinter IDE ([`pyumsn/ide/umsn_ide.umsn`](pyumsn/ide/umsn_ide.umsn)) |
 | **UMSN-IDE Web** | 설치 없이 브라우저에서 쓰는 정적 웹 IDE ([`web/`](web), Pyodide 314.0.7) |
@@ -69,7 +70,7 @@ pip install .
 유닉스(POSIX/GNU) 관례를 따르는 옵션 방식입니다. `python` 처럼 파일을 주면 실행하고, 하는 일은 옵션으로 고릅니다.
 
 ```
-pyumsn [옵션]... [파일.umsn | - | -c 코드] [인자]...
+pyumsn [옵션]... [파일.umsn | 폴더 | - | -c 코드 | -m 모듈] [인자]...
 pyumsn -t|-u [-aq] [-x 패턴]... [--no-copy] [-o 출력] [파일|폴더]...
 pyumsn -n [-q] [-x 패턴]... [파일|폴더]...
 pyumsn -e [파일]...
@@ -82,6 +83,7 @@ pyumsn 안녕.umsn 가 나              # 실행 (임시 .py 를 만들어 실�
 pyumsn -k 안녕.umsn                 # 임시 .py 를 남김 / -p : 변환된 파이썬 코드를 먼저 보기
 pyumsn -c '엄!..하1 ..더해 2..다'   # 코드 문자열 실행
 echo '엄!..하"안녕"..다' | pyumsn   # 표준 입력의 프로그램 실행 (pyumsn - 도 같음)
+pyumsn -m 꾸러미 가 나               # 모듈·패키지를 python -m 처럼 실행 (엄슨 패키지의 __main__.umsn 도)
 pyumsn                              # 터미널이면 대화형 셸 (엄>>>), -i 로도 열림
 pyumsn -t 안녕.umsn                 # 엄슨 → 파이썬 (안녕.py)
 pyumsn -u 내프로젝트/ -o 엄슨프로젝트/  # 파이썬 프로젝트를 안쪽 폴더까지 통째로 (아래 참고)
@@ -100,6 +102,7 @@ pyumsn -M > docs/VOCABULARY.md      # 전체 단어장을 마크다운으로
 | 옵션 | 긴 옵션 | 뜻 |
 |---|---|---|
 | `-c 코드` | `--command=코드` | 코드 문자열 실행 |
+| `-m 모듈` | `--module=모듈` | 모듈(엄슨 모듈·패키지 포함)을 `python -m` 처럼 실행. 뒤는 모두 프로그램 인자 |
 | `-k` | `--keep` | 임시 파이썬 파일을 지우지 않음 |
 | `-p` | `--show-py` | 변환된 파이썬 코드를 먼저 보여줌 (표준 오류) |
 | `-i` | `--interactive` | 대화형 셸 |
@@ -257,6 +260,33 @@ pyumsn -u 내프로젝트                      # -o 없이: 각 .py 옆에 .umsn
 
 예제: [`examples/`](examples) — 안녕, 구구단, 클래스, 넘파이, 판다스, 맷플롯, 티킨터 계산기.
 
+## UmsnUMSN — 엄슨으로 된 엄슨
+
+[`umsnumsn/`](umsnumsn) 은 PyUMSN(변환기·실행기·검사기·대화형 셸·명령줄 전부)을 **엄슨 언어로** 바꾼
+부트스트래핑 구현체입니다. 손으로 옮긴 것이 아니라 `pyumsn` 명령으로 폴더째 변환해서 만듭니다.
+
+```bash
+pyumsn -u pyumsn -o umsnumsn        # PyUMSN → UmsnUMSN (PyUMSN 을 고친 뒤 이것만 다시 실행)
+```
+
+저장소 뿌리에서 `pyumsn -m umsnumsn` 으로 실행하며, 옵션은 `pyumsn` 과 똑같습니다.
+
+```bash
+pyumsn -m umsnumsn -V                      # UmsnUMSN (umsnumsn) 2.1.0
+pyumsn -m umsnumsn examples/구구단.umsn     # 엄슨으로 된 실행기로 실행
+pyumsn -m umsnumsn -t examples/안녕.umsn    # 엄슨으로 된 변환기로 변환
+```
+
+**부트스트랩 고정점** — 테스트([`tests/test_umsnumsn.py`](tests/test_umsnumsn.py))에서 확인합니다.
+
+1. `pyumsn -u pyumsn -o umsnumsn` 의 결과가 저장소의 `umsnumsn/` 과 같다 (다시 만드는 것을 잊지 않도록).
+2. UmsnUMSN 이 **자기 자신을** 파이썬으로 바꾸면 (`pyumsn -m umsnumsn -t umsnumsn`) PyUMSN 과 한 글자도 다르지 않다.
+3. UmsnUMSN 이 PyUMSN 을 엄슨으로 바꾸면 (`pyumsn -m umsnumsn -u pyumsn`) UmsnUMSN 자신이 나온다.
+4. 예제 실행 결과·오류 메시지·종료 상태가 PyUMSN 과 같다.
+
+엄슨 코드는 파이썬 위에서 돌기 때문에 UmsnUMSN 을 처음 띄우는 일(엄슨 모듈 불러오기)은 PyUMSN 이 맡습니다.
+그 뒤의 변환·검사·실행은 모두 엄슨으로 된 코드가 합니다.
+
 ## UMSN-IDE
 
 `pyumsn -e` 로 실행합니다. IDE 자체가 엄슨 언어로 작성되어 있습니다 ([`pyumsn/ide/umsn_ide.umsn`](pyumsn/ide/umsn_ide.umsn)).
@@ -328,6 +358,9 @@ pyumsn.install_import_hook()                   # import 로 .umsn 모듈 불러�
 pip install -e ".[test]"
 python -m pytest
 ```
+
+`pyumsn/` 을 고쳤으면 `pyumsn -u pyumsn -o umsnumsn` 으로 UmsnUMSN 을 다시 만들어 함께 커밋합니다
+(모듈을 지웠다면 `umsnumsn/` 의 그 파일도 지움). 안 하면 테스트가 알려 줍니다.
 
 ### PyPI 배포
 

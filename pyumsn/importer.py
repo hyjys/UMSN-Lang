@@ -26,14 +26,24 @@ class UmsnLoader(importlib.abc.Loader):
     def create_module(self, spec):
         return None
 
-    def exec_module(self, module):
+    def get_source(self, fullname=None):
+        return umsn_to_py(read_source(self.path), filename=self.path)
+
+    def get_code(self, fullname=None):
+        """변환된 파이썬 코드 객체 (``runpy`` 가 ``-m`` 으로 실행할 때도 쓴다)."""
         source = read_source(self.path)
         py = umsn_to_py(source, filename=self.path)
         try:
             compile(py, "<엄슨 %s>" % self.path, "exec")
         except SyntaxError as exc:
             raise syntax_error_to_umsn(exc, source, self.path) from None
-        code = compile(py, self.path, "exec")
+        return compile(py, self.path, "exec")
+
+    def is_package(self, fullname=None):
+        return os.path.basename(self.path) == "__init__" + SUFFIX
+
+    def exec_module(self, module):
+        code = self.get_code(module.__name__)
         module.__file__ = self.path
         exec(code, module.__dict__)
 

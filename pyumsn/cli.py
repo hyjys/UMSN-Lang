@@ -27,14 +27,15 @@ PROG = "pyumsn"
 IDE_PATH = Path(__file__).resolve().parent / "ide" / "umsn_ide.umsn"
 STDIN_NAME = "<stdin>"
 
-SHORT_OPTS = "hVc:kpietunwMo:x:aq"
-LONG_OPTS = ["help", "version", "command=", "keep", "show-py", "interactive", "ide", "edit",
+SHORT_OPTS = "hVc:m:kpietunwMo:x:aq"
+LONG_OPTS = ["help", "version", "command=", "module=", "keep", "show-py", "interactive", "ide", "edit",
              "to-py", "to-umsn", "check", "words", "markdown", "translit", "untranslit",
              "output=", "exclude=", "no-copy", "ascii-symbols", "keep-symbols", "quiet"]
 
 # 옵션 → (모드, 설정 이름)
 _MODE_OPTS = {
     "-c": "command", "--command": "command",
+    "-m": "module", "--module": "module",
     "-i": "repl", "--interactive": "repl",
     "-e": "ide", "--ide": "ide", "--edit": "ide",
     "-t": "topy", "--to-py": "topy",
@@ -53,7 +54,7 @@ _FLAG_OPTS = {
     "--no-copy": "no_copy",
 }
 _MODE_LABEL = {
-    "command": "-c", "repl": "-i", "ide": "-e", "topy": "-t", "toumsn": "-u", "check": "-n",
+    "command": "-c", "module": "-m", "repl": "-i", "ide": "-e", "topy": "-t", "toumsn": "-u", "check": "-n",
     "words": "-w", "translit": "--translit", "untranslit": "--untranslit",
 }
 # 옵션 → 함께 쓸 수 있는 모드
@@ -81,7 +82,7 @@ SKIP_DIR_SUFFIXES = (".egg-info", ".dist-info")
 SKIP_FILE_SUFFIXES = (".pyc", ".pyo")
 
 USAGE = """\
-사용법: pyumsn [옵션]... [파일.umsn | - | -c 코드] [인자]...
+사용법: pyumsn [옵션]... [파일.umsn | 폴더 | - | -c 코드 | -m 모듈] [인자]...
   또는: pyumsn -t|-u [-aq] [-x 패턴]... [--no-copy] [-o 출력] [파일|폴더]...
   또는: pyumsn -n [-q] [-x 패턴]... [파일|폴더]...
   또는: pyumsn -e [파일]...
@@ -98,6 +99,7 @@ HELP = USAGE + """
 
 실행:
   -c, --command=코드     코드 문자열을 실행 (뒤의 인자는 프로그램에 넘김)
+  -m, --module=모듈      모듈(엄슨 모듈·패키지 포함)을 python -m 처럼 실행 (뒤는 모두 프로그램 인자)
   -k, --keep             임시 파이썬 파일을 지우지 않음
   -p, --show-py          변환된 파이썬 코드를 먼저 보여줌 (표준 오류로)
   -i, --interactive      엄슨 대화형 셸 (엄>>>)
@@ -143,6 +145,7 @@ HELP = USAGE + """
                                     엄슨 프로젝트를 파이썬으로 (tests 는 건너뜀)
   pyumsn -n examples                폴더 안 .umsn 모두 검사
   pyumsn -c '엄!..하1 ..더해 2..다'
+  pyumsn -m umsnumsn -t 안녕.umsn   엄슨으로 된 UmsnUMSN 으로 변환
   echo '엄!..하"안녕"..다' | pyumsn
 """
 
@@ -224,6 +227,7 @@ class Options(object):
         self.mode = None
         self.mode_opt = None
         self.code = None
+        self.module = None
         self.output = None
         self.excludes = []
         self.given = set()
@@ -249,6 +253,8 @@ def _collect(pairs, operands):
             opts.set_mode(_MODE_OPTS[opt], opt)
             if opt in ("-c", "--command"):
                 opts.code = value
+            elif opt in ("-m", "--module"):
+                opts.module = value
         elif opt in ("-o", "--output"):
             opts.output = value
             opts.given.add("output")
@@ -265,9 +271,47 @@ def _collect(pairs, operands):
     return opts
 
 
+def _split_module(argv):
+    """``-m 모듈`` 에서 옵션 읽기를 멈춘다 (``python -m`` 처럼 뒤는 모두 프로그램 인자).
+
+    ``(-m 모듈 까지, 나머지)`` 를 돌려주고, ``-m`` 이 없으면 ``(argv, None)``.
+    """
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--" or arg == "-" or not arg.startswith("-"):
+            break
+        if arg.startswith("--"):
+            name, eq, _ = arg[2:].partition("=")
+            found = [o for o in LONG_OPTS if o.rstrip("=").startswith(name)] if name else []
+            if len(found) == 1 and found[0].endswith("="):
+                end = i + 1 if eq else i + 2
+                if found[0] == "module=":
+                    return argv[:end], argv[end:]
+                i = end
+                continue
+            i += 1
+            continue
+        for j in range(1, len(arg)):
+            k = SHORT_OPTS.find(arg[j])
+            if arg[j] != ":" and k != -1 and SHORT_OPTS[k + 1:k + 2] == ":":
+                end = i + 1 if j + 1 < len(arg) else i + 2
+                if arg[j] == "m":
+                    return argv[:end], argv[end:]
+                i = end - 1
+                break
+        i += 1
+    return argv, None
+
+
 def parse_args(argv):
     """명령줄을 읽어 :class:`Options` 를 돌려준다. 잘못되면 :class:`UsageError`."""
-    opts = _collect(*_getopt(argv, permute=False))
+    head, rest = _split_module(argv)
+    if rest is not None:
+        opts = _collect(*_getopt(head, permute=False))
+        opts.operands += rest
+    else:
+        opts = _collect(*_getopt(argv, permute=False))
     if opts.mode in _PERMUTE_MODES:
         # 파일을 여러 개 받는 모드는 옵션이 파일 뒤에 와도 된다 (POSIXLY_CORRECT 면 따르지 않음).
         opts = _collect(*_getopt(argv, permute=True))
@@ -335,6 +379,11 @@ def cmd_command(opts):
     except UmsnError as exc:
         _report_error(exc)
         return 1
+
+
+def cmd_module(opts):
+    from .runner import run_module
+    return run_module(opts.module, opts.operands)
 
 
 def cmd_repl(opts):
@@ -633,7 +682,7 @@ def cmd_untranslit(opts):
 
 
 COMMANDS = {
-    "run": cmd_run, "command": cmd_command, "repl": cmd_repl, "ide": cmd_ide,
+    "run": cmd_run, "command": cmd_command, "module": cmd_module, "repl": cmd_repl, "ide": cmd_ide,
     "topy": cmd_topy, "toumsn": cmd_toumsn, "check": cmd_check,
     "words": cmd_words, "translit": cmd_translit, "untranslit": cmd_untranslit,
 }
@@ -652,7 +701,8 @@ def main(argv=None):
         _write_stdout(HELP)
         return 0
     if opts.version:
-        _say("PyUMSN %s" % __version__)
+        _say("%s %s" % ("PyUMSN" if __package__ == "pyumsn" else "UmsnUMSN (%s)" % __package__,
+                         __version__))
         return 0
     try:
         return COMMANDS[opts.mode or "run"](opts)

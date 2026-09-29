@@ -10,6 +10,9 @@
 - **import 고침**: `__init__.py` 없이 `__init__.umsn` 만 있는 패키지를 파이썬이 네임스페이스 패키지로 먼저 잡아서
   `__init__.umsn` 이 실행되지 않던 문제. 이제 변환한 프로젝트의 패키지·하위 패키지·상대 import 가 그대로 동작한다.
 - `pyumsn 폴더` 는 `폴더/__main__.umsn` 을 실행한다 (`python 폴더/` 처럼).
+- 새 옵션 `-m 모듈` (`--module`): `python -m` 처럼 모듈·패키지를 실행한다. 엄슨 패키지의 `__main__.umsn` 도 된다.
+- **UmsnUMSN** (`umsnumsn/`): PyUMSN 을 `pyumsn -u pyumsn -o umsnumsn` 으로 바꾼, 엄슨 언어로 된 부트스트래핑 구현체.
+  `pyumsn -m umsnumsn ...` 으로 실행한다. 자기 자신을 파이썬으로 바꾸면 PyUMSN 과 똑같이 나오는 고정점을 테스트로 확인한다.
 
 ## 2.0.0
 
