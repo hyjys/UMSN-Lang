@@ -79,7 +79,7 @@ def test_run_program_reloads_edited_modules(work, capsys):
 
 
 def test_changed_files_and_clear(work):
-    write_source(work / "주.umsn", '엄슨함께 엄열어..하"결과.txt"..고 "w"..다 엄으로 파일..한\n    파일.엄써..하"엄슨"..다\n')
+    write_source(work / "주.umsn", '엄슨함께 엄열어..하"결과.txt"..고 "w"..고 엄인코딩방식..은"utf-8"..다 엄으로 파일..한\n    파일.엄써..하"엄슨"..다\n')
     before = umsn_web.snapshot()
     assert umsn_web.run_program("주.umsn") == 0
     assert json.loads(umsn_web.changed_files(before)) == ["결과.txt"]
