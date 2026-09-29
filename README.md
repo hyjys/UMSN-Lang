@@ -39,8 +39,9 @@ print(인사("엄슨"))
 |---|---|
 | **엄슨 언어** (`.umsn`) | 파이썬의 예약어·내장 함수·메소드·문장부호를 엄슨 단어로 바꾼 언어 |
 | **PyUMSN** (`pip` 패키지, 모듈 `pyumsn`) | 엄슨 ↔ 파이썬 변환기, 실행기, import 지원, 대화형 셸 |
-| **`pyumsn`** (명령줄) | `run` / `topy` / `toumsn` / `check` / `ide` / `repl` / `words` |
+| **`pyumsn`** (명령줄) | 유닉스식 옵션: 실행, `-t`/`-u` 변환, `-n` 검사, `-e` IDE, `-i` 셸, `-w` 단어장 |
 | **UMSN-IDE** | **엄슨 언어로 작성된** Tkinter IDE ([`pyumsn/ide/umsn_ide.umsn`](pyumsn/ide/umsn_ide.umsn)) |
+| **UMSN-IDE Web** | 설치 없이 브라우저에서 쓰는 정적 웹 IDE ([`web/`](web), Pyodide 314.0.7) |
 
 윈도우와 리눅스를 지원합니다 (파이썬 3.11 ~ 3.14).
 
@@ -65,23 +66,66 @@ pip install .
 
 ## 명령줄 도구 `pyumsn`
 
-```bash
-pyumsn run 안녕.umsn [인자...]      # 엄슨 실행 (임시 .py 를 만들어 실행 → 끝나면 삭제)
-pyumsn 안녕.umsn                    # run 줄임
-pyumsn run --keep 안녕.umsn         # 임시 .py 를 남김 / --show-py : 변환된 코드 먼저 보기
-pyumsn topy 안녕.umsn               # 엄슨 → 파이썬 (안녕.py)
-pyumsn topy 폴더/ -o 출력폴더/      # 폴더째 변환, -o - 는 화면으로
-pyumsn toumsn hello.py              # 파이썬 → 엄슨 (hello.umsn)
-pyumsn toumsn hello.py --keep-symbols   # 기호( ) : , 는 ASCII 그대로 (순한맛)
-pyumsn check 안녕.umsn              # 영어 이름 등 검사
-pyumsn ide [파일.umsn]              # UMSN-IDE
-pyumsn repl                         # 엄슨 대화형 셸 (엄>>>)
-pyumsn words -s print               # 단어장 검색
-pyumsn words --translit polyfit     # 영어 이름 → 엄슨 음역
-pyumsn words --markdown             # 전체 단어장 (docs/VOCABULARY.md)
+유닉스(POSIX/GNU) 관례를 따르는 옵션 방식입니다. `python` 처럼 파일을 주면 실행하고, 하는 일은 옵션으로 고릅니다.
+
+```
+pyumsn [옵션]... [파일.umsn | - | -c 코드] [인자]...
+pyumsn -t|-u [-aq] [-o 출력] [파일|폴더]...
+pyumsn -n [-q] [파일|폴더]...
+pyumsn -e [파일]...
+pyumsn -w [-M] [검색어]...
+pyumsn --translit 영어이름...  |  --untranslit 엄슨단어...
 ```
 
+```bash
+pyumsn 안녕.umsn 가 나              # 실행 (임시 .py 를 만들어 실행 → 끝나면 삭제), 인자는 프로그램에
+pyumsn -k 안녕.umsn                 # 임시 .py 를 남김 / -p : 변환된 파이썬 코드를 먼저 보기
+pyumsn -c '엄!..하1 ..더해 2..다'   # 코드 문자열 실행
+echo '엄!..하"안녕"..다' | pyumsn   # 표준 입력의 프로그램 실행 (pyumsn - 도 같음)
+pyumsn                              # 터미널이면 대화형 셸 (엄>>>), -i 로도 열림
+pyumsn -t 안녕.umsn                 # 엄슨 → 파이썬 (안녕.py)
+pyumsn -t 폴더/ -o 출력폴더/        # 폴더째 변환, -o - 는 표준 출력
+pyumsn -t < 안녕.umsn > 안녕.py     # 파일을 안 주면 표준 입력 → 표준 출력 (필터)
+pyumsn -u hello.py                  # 파이썬 → 엄슨 (hello.umsn)
+pyumsn -ua hello.py                 # 기호 ( ) : , 는 ASCII 그대로 (순한맛, --ascii-symbols)
+pyumsn -n 안녕.umsn examples/       # 영어 이름 등 검사 (폴더는 안의 .umsn 전부)
+pyumsn -e [파일.umsn]...            # UMSN-IDE
+pyumsn -w print                     # 단어장 검색 (-w 만 주면 전체)
+pyumsn --translit polyfit           # 영어 이름 → 엄슨 음역
+pyumsn -M > docs/VOCABULARY.md      # 전체 단어장을 마크다운으로
+```
+
+| 옵션 | 긴 옵션 | 뜻 |
+|---|---|---|
+| `-c 코드` | `--command=코드` | 코드 문자열 실행 |
+| `-k` | `--keep` | 임시 파이썬 파일을 지우지 않음 |
+| `-p` | `--show-py` | 변환된 파이썬 코드를 먼저 보여줌 (표준 오류) |
+| `-i` | `--interactive` | 대화형 셸 |
+| `-e` | `--ide`, `--edit` | UMSN-IDE |
+| `-t` | `--to-py` | 엄슨 → 파이썬 |
+| `-u` | `--to-umsn` | 파이썬 → 엄슨 |
+| `-n` | `--check` | 실행하지 않고 검사만 |
+| `-o 경로` | `--output=경로` | 출력 파일/폴더 (`-` 는 표준 출력, 피연산자가 여럿이면 폴더) |
+| `-a` | `--ascii-symbols`, `--keep-symbols` | (`-u`) 기호를 ASCII 그대로 |
+| `-q` | `--quiet` | 성공 메시지("만들었슨", "문제 없슨") 끄기 |
+| `-w` | `--words` | 단어장 |
+| `-M` | `--markdown` | 단어장 전체를 마크다운 표로 |
+| | `--translit` / `--untranslit` | 영어 이름 ↔ 엄슨 음역 |
+| `-h` / `-V` | `--help` / `--version` | 도움말 / 버전 |
+
+- 짧은 옵션은 묶어 쓸 수 있고(`-tq`), 값은 붙여 써도 됩니다(`-o출력.py`). 긴 옵션은 `--output=파일` 또는 `--output 파일`,
+  헷갈리지 않으면 줄여 써도 됩니다(`--to-p`).
+- **실행할 때는 파일 이름에서 옵션 읽기를 멈춥니다.** `pyumsn 안녕.umsn -t` 의 `-t` 는 프로그램의 인자입니다 (`python` 과 같음).
+  변환·검사처럼 파일을 여러 개 받을 때는 옵션을 파일 뒤에 써도 됩니다 (`pyumsn -t a.umsn -o b.py`, `POSIXLY_CORRECT` 를 따름).
+- `--` 뒤는 모두 파일/인자로 읽고, `-` 는 표준 입력(출력)입니다.
+- 종료 상태: `0` 성공, `1` 오류, `2` 잘못된 사용법. 실행할 때는 프로그램의 종료 상태를 그대로 돌려줍니다.
+- 오류 메시지는 표준 오류로, 결과는 표준 출력으로 나갑니다.
+
 `python -m pyumsn ...` 으로도 똑같이 쓸 수 있습니다.
+
+> 1.x 의 하위 명령(`pyumsn run`, `topy`, `toumsn`, `check`, `ide`, `repl`, `words`)은 2.0 에서 옵션으로 바뀌었습니다.
+> 예전 명령을 쓰면 새 옵션을 알려 줍니다: `run` → 파일만, `topy` → `-t`, `toumsn` → `-u`, `check` → `-n`, `ide` → `-e`,
+> `repl` → `-i`, `words` → `-w` (`--search 말` → `-w 말`, `--translit` 은 그대로).
 
 ## 문법
 
@@ -122,7 +166,7 @@ pyumsn words --markdown             # 전체 단어장 (docs/VOCABULARY.md)
 
 - 속성 접근 `.` 과 `...` 은 그대로 씁니다: `엄슨.이름`.
 - 기호어는 가장 긴 것부터 읽습니다. `..하` 뒤에 `다`로 시작하는 이름이 오면 띄어 쓰세요 (`f..하 다음..다`).
-- ASCII 기호 `( ) : , =` 도 그대로 쓸 수 있습니다 (`pyumsn toumsn --keep-symbols` 결과).
+- ASCII 기호 `( ) : , =` 도 그대로 쓸 수 있습니다 (`pyumsn -ua` 결과).
 
 ### 3. 한글 전용 규칙 — 영어 이름 금지
 
@@ -142,7 +186,7 @@ pyumsn words --markdown             # 전체 단어장 (docs/VOCABULARY.md)
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 아 | 브 | 크 | 드 | 에 | 프 | 그 | 흐 | 이 | 즈 | 키 | 르 | 므 | 느 | 오 | 피 | 쿠 | 러 | 스 | 트 | 우 | 뷔 | 워 | 엑 | 야 | 지 |
 
-예: `넘엄.외_피오르야프이트(...)` = `np.polyfit(...)`. `pyumsn words --translit 이름` 이나 IDE 의 **도움말 → 음역 도구**를 쓰면 편합니다.
+예: `넘엄.외_피오르야프이트(...)` = `np.polyfit(...)`. `pyumsn --translit 이름` 이나 IDE 의 **도움말 → 음역 도구**를 쓰면 편합니다.
 
 파이썬 → 엄슨 변환(`toumsn`)은 사전에 없는 영어 이름을 자동으로 음역하므로, 결과는 항상 이 규칙을 지킵니다.
 한글 이름이 엄슨 단어와 겹치면 `$엄슨` 처럼 `$` 를 붙여 "그냥 이름"으로 씁니다.
@@ -189,7 +233,7 @@ pyumsn words --markdown             # 전체 단어장 (docs/VOCABULARY.md)
 
 ## UMSN-IDE
 
-`pyumsn ide` 로 실행합니다. IDE 자체가 엄슨 언어로 작성되어 있습니다 ([`pyumsn/ide/umsn_ide.umsn`](pyumsn/ide/umsn_ide.umsn)).
+`pyumsn -e` 로 실행합니다. IDE 자체가 엄슨 언어로 작성되어 있습니다 ([`pyumsn/ide/umsn_ide.umsn`](pyumsn/ide/umsn_ide.umsn)).
 
 - **엄슨 구문 강조** — 예약어, 내장 함수, 라이브러리 단어, `..` 기호어, `엄!`, 음역어, 문자열, 주석, 숫자를 색으로 구분
 - **실시간 한글 전용 검사** — 영어 이름에 빨간 밑줄, 오른쪽 클릭 → 사전 단어/음역으로 바꾸기
@@ -200,6 +244,36 @@ pyumsn words --markdown             # 전체 단어장 (docs/VOCABULARY.md)
 - 자동 완성 (Ctrl+Space), 엄슨 단어장 패널 (F1, 검색 + 두 번 눌러 넣기)
 - 파이썬 코드 보기 (F6), 엄슨 검사 (F7), `.py` 가져오기/내보내기
 - 찾기/바꾸기 (Ctrl+F), 줄로 이동 (Ctrl+G), 어두운/밝은 테마 (F9), 글자 크기 (Ctrl +/−, Ctrl+휠)
+
+## UMSN-IDE Web
+
+설치 없이 브라우저에서 엄슨을 쓰고 실행하는 정적 웹 IDE 입니다 ([`web/`](web)). 파이썬은
+[Pyodide](https://pyodide.org) **314.0.7** (파이썬 3.14, WebAssembly) 로 브라우저 안에서 돌고, 서버는 파일만 주면 됩니다.
+글꼴은 [D2Coding](https://github.com/naver/d2codingfont) 을 씁니다 (편집기·콘솔·맷플롯립 그림의 한글).
+
+- 데스크톱 IDE 와 같은 구문 강조·실시간 한글 전용 검사 (빨간 물결 밑줄, 오른쪽 클릭으로 사전 단어/음역으로 바꾸기)
+- `엄슨! ▶` (F5) 실행, 콘솔의 `입력 ▸` 칸으로 `엄?`(input) 에 답하기, `■ 멈춰` (Shift+F5), 프로그램 인자
+- 오류 줄 클릭 → 그 줄로 이동, 오류 메시지는 `pyumsn` 과 똑같이 엄슨 이름으로
+- 여러 파일(탭) — 열린 `.umsn` 끼리 `엄슨가져와` 가능, 자료 파일 올리기, 프로그램이 만든 파일 내려받기
+- 넘파이·판다스·맷플롯립은 처음 쓸 때 자동으로 받아 오고, 그림은 콘솔에 표시
+- 파이썬 보기 (F6), `.py` 열기(엄슨으로 변환)·내보내기, 단어장 (F1), 음역 도구, 자동 완성 (Ctrl+Space)
+- 찾기/바꾸기, 줄로 이동, 주석 토글, 어두운/밝은 테마, 글자 크기, 코드를 담은 공유 링크
+- `.umsn` 파일은 브라우저(localStorage)에 저장됩니다
+
+로컬에서 쓰려면 저장소 뿌리에서 정적 서버를 띄우고 `/web/` 을 엽니다.
+
+```bash
+python -m http.server 8000     # → http://localhost:8000/web/
+```
+
+GitHub Pages 에는 [`.github/workflows/pages.yml`](.github/workflows/pages.yml) 이 `web/` + `pyumsn/` + `examples/` 를 모아
+올립니다 (저장소 **Settings → Pages → Source** 를 **GitHub Actions** 로 한 번 설정). 다른 정적 호스팅에 올릴 때도 같은 모양
+(`index.html` 옆에 `pyumsn/`, `examples/`)으로 두면 됩니다.
+
+- 실행 중 `엄?` 에 바로 답하고 멈추려면 SharedArrayBuffer 가 필요합니다. 정적 호스팅은 헤더를 못 바꾸므로 함께 든
+  서비스 워커(`sw.js`)가 COOP/COEP 헤더를 붙여 줍니다 (첫 방문 때 한 번 새로 고침). 이것이 안 되는 환경에서는
+  실행 전에 입력 칸에 적어 둔 줄이 차례로 `엄?` 에 들어가고, `■ 멈춰` 는 실행기를 새로 띄웁니다.
+- 티킨터(tkinter)·거북(turtle) 창은 브라우저에서 열 수 없습니다. 그런 프로그램은 데스크톱 UMSN-IDE (`pyumsn -e`) 를 쓰세요.
 
 ## 파이썬에서 쓰기
 
@@ -217,7 +291,7 @@ pyumsn.install_import_hook()                   # import 로 .umsn 모듈 불러�
 
 - 변환은 **토큰 단위**입니다. 문자열·주석은 원문 그대로, 이름·기호만 사전으로 바꿉니다. 그래서 줄 번호가 그대로라
   오류 위치가 엄슨 파일의 줄과 정확히 맞습니다.
-- `pyumsn run` 은 엄슨을 파이썬으로 바꿔 **임시 `.py` 파일**을 만들고, 그것을 원래 `.umsn` 파일 이름으로 실행합니다.
+- `pyumsn 파일.umsn` 은 엄슨을 파이썬으로 바꿔 **임시 `.py` 파일**을 만들고, 그것을 원래 `.umsn` 파일 이름으로 실행합니다.
   그래서 오류 추적 기록에 엄슨 소스 줄이 보입니다. 임시 파일은 실행이 시작되면 바로 지워집니다 (`--keep` 으로 보존).
 - 파이썬 → 엄슨 → 파이썬 왕복은 원문과 같습니다 (기호어가 붙어서 헷갈릴 때만 공백 한 칸이 들어감).
   테스트에서 파이썬 표준 라이브러리 파일들로 확인합니다.
@@ -231,8 +305,8 @@ python -m pytest
 
 ### PyPI 배포
 
-1. `pyumsn/__init__.py` 의 `__version__` 을 올린다 (예: `1.0.1`). 같은 버전은 PyPI 에 다시 올릴 수 없다.
-2. `main` 에 병합한 뒤 GitHub 에서 **Release** 를 만든다. 태그는 `v` + 버전 (예: `v1.0.1`).
+1. `pyumsn/__init__.py` 의 `__version__` 을 올린다 (예: `2.0.0`). 같은 버전은 PyPI 에 다시 올릴 수 없다.
+2. `main` 에 병합한 뒤 GitHub 에서 **Release** 를 만든다. 태그는 `v` + 버전 (예: `v2.0.0`).
 3. `.github/workflows/publish.yml` 이 테스트 → 빌드 → PyPI 업로드를 자동으로 한다 (Trusted Publishing, 토큰 불필요).
    TestPyPI 로 먼저 시험하려면 Actions 탭에서 **Publish** 워크플로를 수동 실행하고 `testpypi` 를 고른다.
 

@@ -7,7 +7,7 @@
     '엄!..하"안녕 엄슨"..다'
 """
 
-__version__ = "1.0.1"
+__version__ = "2.0.0"
 
 from .errors import UmsnEncodingError, UmsnError, UmsnSyntaxError  # noqa: E402
 from .sourceio import read_source, write_source  # noqa: E402

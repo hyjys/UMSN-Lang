@@ -1,0 +1,58 @@
+name: Pages
+
+# UMSN-IDE Web 을 GitHub Pages 에 올린다.
+# 저장소 Settings → Pages → Source 를 "GitHub Actions" 로 한 번 설정해야 한다.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "pyumsn/**"
+      - "examples/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: 테스트
+        run: |
+          python -m pip install -e ".[test]"
+          python -m pytest -q tests/test_web.py
+      - name: 사이트 모으기
+        run: |
+          mkdir -p _site/pyumsn _site/examples
+          cp web/*.html web/*.css web/*.js web/*.py _site/
+          cp pyumsn/*.py _site/pyumsn/
+          cp examples/*.umsn _site/examples/
+          touch _site/.nojekyll
+          ls -R _site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

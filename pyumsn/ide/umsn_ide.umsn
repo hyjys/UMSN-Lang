@@ -1,6 +1,6 @@
 """UMSN-IDE — 엄슨 통합 개발 환경 (엄슨 언어로 작성됨).
 
-실행:  pyumsn ide [파일.umsn]
+실행:  pyumsn -e [파일.umsn]...
 """
 
 엄슨가져와 제이슨엄슨
