@@ -10,9 +10,11 @@
 - 종료 상태: 0 성공, 1 오류, 2 잘못된 사용법. 실행할 때는 프로그램의 종료 상태.
 """
 
+import fnmatch
 import getopt
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -25,14 +27,15 @@ PROG = "pyumsn"
 IDE_PATH = Path(__file__).resolve().parent / "ide" / "umsn_ide.umsn"
 STDIN_NAME = "<stdin>"
 
-SHORT_OPTS = "hVc:kpietunwMo:aq"
-LONG_OPTS = ["help", "version", "command=", "keep", "show-py", "interactive", "ide", "edit",
+SHORT_OPTS = "hVc:m:kpietunwMo:x:aq"
+LONG_OPTS = ["help", "version", "command=", "module=", "keep", "show-py", "interactive", "ide", "edit",
              "to-py", "to-umsn", "check", "words", "markdown", "translit", "untranslit",
-             "output=", "ascii-symbols", "keep-symbols", "quiet"]
+             "output=", "exclude=", "no-copy", "ascii-symbols", "keep-symbols", "quiet"]
 
 # 옵션 → (모드, 설정 이름)
 _MODE_OPTS = {
     "-c": "command", "--command": "command",
+    "-m": "module", "--module": "module",
     "-i": "repl", "--interactive": "repl",
     "-e": "ide", "--ide": "ide", "--edit": "ide",
     "-t": "topy", "--to-py": "topy",
@@ -48,9 +51,10 @@ _FLAG_OPTS = {
     "-a": "keep_symbols", "--ascii-symbols": "keep_symbols", "--keep-symbols": "keep_symbols",
     "-q": "quiet", "--quiet": "quiet",
     "-M": "markdown", "--markdown": "markdown",
+    "--no-copy": "no_copy",
 }
 _MODE_LABEL = {
-    "command": "-c", "repl": "-i", "ide": "-e", "topy": "-t", "toumsn": "-u", "check": "-n",
+    "command": "-c", "module": "-m", "repl": "-i", "ide": "-e", "topy": "-t", "toumsn": "-u", "check": "-n",
     "words": "-w", "translit": "--translit", "untranslit": "--untranslit",
 }
 # 옵션 → 함께 쓸 수 있는 모드
@@ -58,9 +62,10 @@ _FLAG_MODES = {
     "keep": ("run", "command"), "show_py": ("run", "command"),
     "keep_symbols": ("toumsn",), "output": ("topy", "toumsn"),
     "quiet": ("topy", "toumsn", "check"), "markdown": ("words",),
+    "exclude": ("topy", "toumsn", "check"), "no_copy": ("topy", "toumsn"),
 }
 _FLAG_LABEL = {"keep": "-k", "show_py": "-p", "keep_symbols": "-a", "output": "-o",
-               "quiet": "-q", "markdown": "-M"}
+               "quiet": "-q", "markdown": "-M", "exclude": "-x", "no_copy": "--no-copy"}
 # 파일을 여러 개 받는 모드: 옵션과 피연산자를 섞어 써도 된다
 _PERMUTE_MODES = ("topy", "toumsn", "check", "ide", "words", "translit", "untranslit")
 # 예전(1.x) 하위 명령 → 새 옵션
@@ -68,10 +73,18 @@ _OLD_COMMANDS = {"run": "pyumsn 파일.umsn", "topy": "pyumsn -t", "toumsn": "py
                  "check": "pyumsn -n", "ide": "pyumsn -e", "repl": "pyumsn -i",
                  "words": "pyumsn -w"}
 
+# 폴더(프로젝트)를 변환·검사할 때 들어가지 않는 폴더: 버전 관리, 캐시, 가상 환경, 빌드 부산물.
+# pyvenv.cfg 나 conda-meta 가 든 폴더(가상 환경)도 건너뛴다.
+SKIP_DIRS = frozenset([".git", ".hg", ".svn", ".bzr", "__pycache__", ".venv", ".tox", ".nox",
+                       ".mypy_cache", ".pytest_cache", ".ruff_cache", ".eggs", "node_modules",
+                       "site-packages"])
+SKIP_DIR_SUFFIXES = (".egg-info", ".dist-info")
+SKIP_FILE_SUFFIXES = (".pyc", ".pyo")
+
 USAGE = """\
-사용법: pyumsn [옵션]... [파일.umsn | - | -c 코드] [인자]...
-  또는: pyumsn -t|-u [-aq] [-o 출력] [파일|폴더]...
-  또는: pyumsn -n [-q] [파일|폴더]...
+사용법: pyumsn [옵션]... [파일.umsn | 폴더 | - | -c 코드 | -m 모듈] [인자]...
+  또는: pyumsn -t|-u [-aq] [-x 패턴]... [--no-copy] [-o 출력] [파일|폴더]...
+  또는: pyumsn -n [-q] [-x 패턴]... [파일|폴더]...
   또는: pyumsn -e [파일]...
   또는: pyumsn -w [-M] [검색어]...
   또는: pyumsn --translit 영어이름...  |  --untranslit 엄슨단어..."""
@@ -81,23 +94,31 @@ HELP = USAGE + """
 엄슨(UMSN) 프로그래밍 언어 도구 — 실행, 엄슨 ↔ 파이썬 변환, 검사, IDE.
 
 파일을 주면 실행합니다. 파일 뒤의 인자는 옵션처럼 보여도 모두 프로그램에 넘어갑니다.
+폴더를 주면 그 안의 __main__.umsn 을 실행합니다 (python 폴더/ 와 같음).
 파일이 없으면 터미널에서는 대화형 셸을 열고, 파이프로 들어오면 표준 입력을 실행합니다.
 
 실행:
   -c, --command=코드     코드 문자열을 실행 (뒤의 인자는 프로그램에 넘김)
+  -m, --module=모듈      모듈(엄슨 모듈·패키지 포함)을 python -m 처럼 실행 (뒤는 모두 프로그램 인자)
   -k, --keep             임시 파이썬 파일을 지우지 않음
   -p, --show-py          변환된 파이썬 코드를 먼저 보여줌 (표준 오류로)
   -i, --interactive      엄슨 대화형 셸 (엄>>>)
   -e, --ide, --edit      UMSN-IDE 로 파일 열기
 
 변환·검사 (파일이 없거나 '-' 이면 표준 입력을 읽어 표준 출력으로):
-  -t, --to-py            엄슨 → 파이썬 (파일.umsn → 파일.py, 폴더는 통째로)
+  -t, --to-py            엄슨 → 파이썬 (파일.umsn → 파일.py)
   -u, --to-umsn          파이썬 → 엄슨 (파일.py → 파일.umsn)
   -n, --check            실행하지 않고 검사만 (영어 이름 등)
   -o, --output=경로      출력 파일 또는 폴더 ('-' 는 표준 출력).
                          피연산자가 여럿이면 폴더로 봅니다.
+  -x, --exclude=패턴     (폴더) 이 이름·경로 패턴에 맞는 파일과 폴더는 건너뜀 (여러 번 가능)
+      --no-copy          (폴더) 다른 폴더로 변환할 때 변환하지 않는 파일을 복사하지 않음
   -a, --ascii-symbols    (-u) 괄호·연산자 기호를 ASCII 그대로 둠 (--keep-symbols)
   -q, --quiet            성공 메시지를 출력하지 않음
+
+폴더를 주면 안쪽 폴더까지 모두 들어가 프로젝트를 통째로 변환합니다. -o 로 다른 폴더에 만들면
+자료 파일 등 나머지 파일도 같은 자리에 복사해서 그대로 실행할 수 있는 프로젝트가 됩니다.
+.git, __pycache__, 가상 환경(.venv 등), node_modules, *.egg-info 같은 폴더는 건너뜁니다.
 
 단어장:
   -w, --words            단어장 보기 (검색어를 주면 그 말이 든 단어만)
@@ -118,9 +139,13 @@ HELP = USAGE + """
   pyumsn -t 안녕.umsn               안녕.py 만들기
   pyumsn -t < 안녕.umsn > 안녕.py   표준 입력 → 표준 출력
   pyumsn -ua hello.py               hello.umsn 만들기 (기호는 ASCII)
-  pyumsn -t examples -o build       폴더째 변환
+  pyumsn -u 내프로젝트 -o 엄슨프로젝트
+                                    파이썬 프로젝트를 통째로 엄슨으로 (안쪽 폴더 포함)
+  pyumsn -t 엄슨프로젝트 -o 되돌림 -x tests
+                                    엄슨 프로젝트를 파이썬으로 (tests 는 건너뜀)
   pyumsn -n examples                폴더 안 .umsn 모두 검사
   pyumsn -c '엄!..하1 ..더해 2..다'
+  pyumsn -m umsnumsn -t 안녕.umsn   엄슨으로 된 UmsnUMSN 으로 변환
   echo '엄!..하"안녕"..다' | pyumsn
 """
 
@@ -202,9 +227,12 @@ class Options(object):
         self.mode = None
         self.mode_opt = None
         self.code = None
+        self.module = None
         self.output = None
+        self.excludes = []
         self.given = set()
         self.keep = self.show_py = self.keep_symbols = self.quiet = self.markdown = False
+        self.no_copy = False
         self.help = self.version = False
         self.operands = []
 
@@ -225,9 +253,14 @@ def _collect(pairs, operands):
             opts.set_mode(_MODE_OPTS[opt], opt)
             if opt in ("-c", "--command"):
                 opts.code = value
+            elif opt in ("-m", "--module"):
+                opts.module = value
         elif opt in ("-o", "--output"):
             opts.output = value
             opts.given.add("output")
+        elif opt in ("-x", "--exclude"):
+            opts.excludes.append(value)
+            opts.given.add("exclude")
         else:
             name = _FLAG_OPTS[opt]
             setattr(opts, name, True)
@@ -238,9 +271,47 @@ def _collect(pairs, operands):
     return opts
 
 
+def _split_module(argv):
+    """``-m 모듈`` 에서 옵션 읽기를 멈춘다 (``python -m`` 처럼 뒤는 모두 프로그램 인자).
+
+    ``(-m 모듈 까지, 나머지)`` 를 돌려주고, ``-m`` 이 없으면 ``(argv, None)``.
+    """
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--" or arg == "-" or not arg.startswith("-"):
+            break
+        if arg.startswith("--"):
+            name, eq, _ = arg[2:].partition("=")
+            found = [o for o in LONG_OPTS if o.rstrip("=").startswith(name)] if name else []
+            if len(found) == 1 and found[0].endswith("="):
+                end = i + 1 if eq else i + 2
+                if found[0] == "module=":
+                    return argv[:end], argv[end:]
+                i = end
+                continue
+            i += 1
+            continue
+        for j in range(1, len(arg)):
+            k = SHORT_OPTS.find(arg[j])
+            if arg[j] != ":" and k != -1 and SHORT_OPTS[k + 1:k + 2] == ":":
+                end = i + 1 if j + 1 < len(arg) else i + 2
+                if arg[j] == "m":
+                    return argv[:end], argv[end:]
+                i = end - 1
+                break
+        i += 1
+    return argv, None
+
+
 def parse_args(argv):
     """명령줄을 읽어 :class:`Options` 를 돌려준다. 잘못되면 :class:`UsageError`."""
-    opts = _collect(*_getopt(argv, permute=False))
+    head, rest = _split_module(argv)
+    if rest is not None:
+        opts = _collect(*_getopt(head, permute=False))
+        opts.operands += rest
+    else:
+        opts = _collect(*_getopt(argv, permute=False))
     if opts.mode in _PERMUTE_MODES:
         # 파일을 여러 개 받는 모드는 옵션이 파일 뒤에 와도 된다 (POSIXLY_CORRECT 면 따르지 않음).
         opts = _collect(*_getopt(argv, permute=True))
@@ -283,6 +354,9 @@ def cmd_run(opts):
         target, args = "-", []
     else:
         target, args = opts.operands[0], opts.operands[1:]
+        main_file = os.path.join(target, "__main__.umsn")
+        if os.path.isdir(target) and os.path.isfile(main_file):
+            target = main_file
     try:
         if target == "-":
             return run_source(_read_stdin(), STDIN_NAME, args, keep=opts.keep, show_py=opts.show_py)
@@ -291,7 +365,7 @@ def cmd_run(opts):
         _say("엄슨 오류! 파일이 없슨: %s" % target, err=True)
         return 1
     except IsADirectoryError:
-        _say("엄슨 오류! 폴더는 실행할 수 없슨: %s" % target, err=True)
+        _say("엄슨 오류! 폴더에 __main__.umsn 이 없어 실행할 수 없슨: %s" % target, err=True)
         return 1
     except UmsnError as exc:
         _report_error(exc)
@@ -307,6 +381,11 @@ def cmd_command(opts):
         return 1
 
 
+def cmd_module(opts):
+    from .runner import run_module
+    return run_module(opts.module, opts.operands)
+
+
 def cmd_repl(opts):
     from .repl import main
     return main()
@@ -319,6 +398,55 @@ def cmd_ide(opts):
     except UmsnError as exc:
         _report_error(exc)
         return 1
+
+
+# ---------------------------------------------------------------------------
+# 폴더(프로젝트) 훑기
+# ---------------------------------------------------------------------------
+def _matches(rel, name, patterns):
+    return any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(name, pat) for pat in patterns)
+
+
+def _skip_dir(path, name):
+    if name in SKIP_DIRS or name.endswith(SKIP_DIR_SUFFIXES):
+        return True
+    return os.path.isfile(os.path.join(path, "pyvenv.cfg")) or os.path.isdir(os.path.join(path, "conda-meta"))
+
+
+def walk_project(root, excludes=(), skip=()):
+    """폴더 안의 파일을 안쪽 폴더까지 이름 순서로 돌려준다 (``(경로, 상대경로)``).
+
+    :data:`SKIP_DIRS` 같은 폴더, ``excludes`` 패턴(이름이나 ``/`` 로 쓴 상대 경로)에 맞는 것,
+    ``skip`` 에 든 폴더(출력 폴더 등)는 건너뛴다. 폴더 심볼릭 링크는 따라가지 않는다.
+    """
+    root = Path(root)
+    skip = {os.path.normcase(str(Path(p).resolve())) for p in skip}
+    for dirpath, dirnames, filenames in os.walk(root):
+        base = Path(dirpath)
+        rel_base = base.relative_to(root)
+        keep = []
+        for name in sorted(dirnames):
+            path = base / name
+            rel = (rel_base / name).as_posix()
+            if (_skip_dir(path, name) or _matches(rel, name, excludes)
+                    or os.path.normcase(str(path.resolve())) in skip):
+                continue
+            keep.append(name)
+        dirnames[:] = keep
+        for name in sorted(filenames):
+            rel = (rel_base / name).as_posix()
+            if name.endswith(SKIP_FILE_SUFFIXES) or _matches(rel, name, excludes):
+                continue
+            yield base / name, rel_base / name
+
+
+def _same_path(a, b):
+    return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
+
+
+def _inside(path, root):
+    path, root = Path(path).resolve(), Path(root).resolve()
+    return path != root and root in path.parents
 
 
 # ---------------------------------------------------------------------------
@@ -356,12 +484,14 @@ def _convert(opts, direction):
         try:
             text = text_source()
             _emit(_translate(text, src_name, direction, opts.keep_symbols), src_name, target, opts.quiet)
+            return True
         except UmsnError as exc:
             failed += 1
             _report_error(exc)
         except OSError as exc:
             failed += 1
             _say("엄슨 오류! %s" % exc, err=True)
+        return False
 
     for operand in operands:
         if operand == "-":
@@ -384,12 +514,7 @@ def _convert(opts, direction):
                 out_root = Path(output) / source.resolve().name
             else:
                 out_root = Path(output)
-            files = sorted(p for p in source.rglob("*" + src_suffix) if p.is_file())
-            if not files and not opts.quiet:
-                _say("변환할 %s 파일이 없슨: %s" % (src_suffix, source), err=True)
-            for path in files:
-                target = out_root / path.relative_to(source).with_suffix(dst_suffix)
-                convert(lambda p=path: read_source(p), str(path), target)
+            failed += _convert_tree(source, out_root, src_suffix, dst_suffix, opts, convert)
             continue
         if output == "-" or (output and not many):
             target = output
@@ -399,6 +524,55 @@ def _convert(opts, direction):
             target = source.with_suffix(dst_suffix)
         convert(lambda p=source: read_source(p), str(source), target)
     return 1 if failed else 0
+
+
+def _convert_tree(source, out_root, src_suffix, dst_suffix, opts, convert):
+    """폴더를 안쪽 폴더까지 통째로 변환한다. 돌려주는 값은 복사하다 실패한 파일 수.
+
+    ``out_root`` 가 다른 폴더면 변환하지 않는 파일(자료, 설정 등)도 같은 자리에 복사해서
+    그대로 실행할 수 있는 프로젝트를 만든다 (``--no-copy`` 면 복사하지 않음).
+    """
+    in_place = _same_path(source, out_root)
+    skip = [out_root] if not in_place and _inside(out_root, source) else []
+    sources, others = [], []
+    for path, rel in walk_project(source, opts.excludes, skip):
+        (sources if path.suffix == src_suffix else others).append((path, rel))
+    if not sources and not opts.quiet:
+        _say("변환할 %s 파일이 없슨: %s" % (src_suffix, source), err=True)
+    made = set()
+    converted = copied = bad = 0
+    for path, rel in sources:
+        target = out_root / rel.with_suffix(dst_suffix)
+        made.add(os.path.normcase(str(target)))
+        if convert(lambda p=path: read_source(p), str(path), target):
+            converted += 1
+        else:
+            bad += 1
+    copy_failed = 0
+    if not in_place and not opts.no_copy:
+        for path, rel in others:
+            target = out_root / rel
+            if os.path.normcase(str(target)) in made:
+                if not opts.quiet:
+                    _say("복사하지 않았슨: %s (변환한 파일과 이름이 겹침)" % path, err=True)
+                continue
+            if _same_path(path, target):
+                continue
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+                copied += 1
+            except OSError as exc:
+                copy_failed += 1
+                _say("엄슨 오류! 복사하지 못했슨: %s (%s)" % (path, exc), err=True)
+    if not opts.quiet and (sources or copied):
+        summary = "변환 %d개" % converted
+        if copied or (not in_place and not opts.no_copy):
+            summary += ", 복사 %d개" % copied
+        if bad or copy_failed:
+            summary += ", 실패 %d개" % (bad + copy_failed)
+        _say("폴더 %s → %s: %s" % (source, out_root, summary), err=True)
+    return copy_failed
 
 
 def cmd_topy(opts):
@@ -417,7 +591,7 @@ def cmd_check(opts):
     for operand in opts.operands or ["-"]:
         path = Path(operand)
         if operand != "-" and path.is_dir():
-            targets += [str(p) for p in sorted(path.rglob("*.umsn")) if p.is_file()]
+            targets += [str(p) for p, _ in walk_project(path, opts.excludes) if p.suffix == ".umsn"]
         else:
             targets.append(operand)
     bad = 0
@@ -508,7 +682,7 @@ def cmd_untranslit(opts):
 
 
 COMMANDS = {
-    "run": cmd_run, "command": cmd_command, "repl": cmd_repl, "ide": cmd_ide,
+    "run": cmd_run, "command": cmd_command, "module": cmd_module, "repl": cmd_repl, "ide": cmd_ide,
     "topy": cmd_topy, "toumsn": cmd_toumsn, "check": cmd_check,
     "words": cmd_words, "translit": cmd_translit, "untranslit": cmd_untranslit,
 }
@@ -527,7 +701,8 @@ def main(argv=None):
         _write_stdout(HELP)
         return 0
     if opts.version:
-        _say("PyUMSN %s" % __version__)
+        _say("%s %s" % ("PyUMSN" if __package__ == "pyumsn" else "UmsnUMSN (%s)" % __package__,
+                         __version__))
         return 0
     try:
         return COMMANDS[opts.mode or "run"](opts)

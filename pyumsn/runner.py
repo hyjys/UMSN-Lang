@@ -11,6 +11,9 @@ from .sourceio import read_source, write_source
 from .translator import umsn_to_py
 
 _PACKAGE_PARENT = str(Path(__file__).resolve().parent.parent)
+# 이 패키지의 launcher. PyUMSN 을 엄슨으로 바꾼 UmsnUMSN 에서는 엄슨으로 된 launcher 이므로
+# 파이썬이 바로 실행할 수 없어 PyUMSN 의 launcher 가 모듈로(-m) 실행한다.
+_LAUNCHER = __name__.rpartition(".")[0] + ".launcher"
 
 
 KEEP_ENV = "PYUMSN_KEEP_TEMP"
@@ -38,7 +41,10 @@ def build_command(py_path, umsn_path, args=(), unbuffered=False):
     cmd = [sys.executable, "-X", "utf8"]
     if unbuffered:
         cmd.append("-u")
-    cmd += ["-m", "pyumsn.launcher", str(py_path), str(umsn_path)]
+    cmd += ["-m", "pyumsn.launcher"]
+    if _LAUNCHER != "pyumsn.launcher":
+        cmd += ["-m", _LAUNCHER]
+    cmd += [str(py_path), str(umsn_path)]
     cmd += [str(a) for a in args]
     return cmd
 
@@ -114,6 +120,28 @@ def _run(tmp, target, args, keep, show_py, env):
         _restore_sigterm(old_handler)
         if not keep:
             remove_quietly(tmp)
+
+
+def run_module(name, args=()):
+    """``python -m`` 처럼 모듈(엄슨 모듈·패키지 포함)을 실행하고 종료 코드를 돌려준다."""
+    cmd = [sys.executable, "-X", "utf8", "-m", "pyumsn.launcher", "-m", name]
+    cmd += [str(a) for a in args]
+    old_handler = _catch_sigterm()
+    try:
+        proc = subprocess.Popen(cmd, env=child_env())
+        try:
+            return proc.wait()
+        except KeyboardInterrupt:
+            try:
+                return proc.wait(timeout=5)
+            except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                proc.kill()
+                return 130
+        except SystemExit:
+            proc.terminate()
+            raise
+    finally:
+        _restore_sigterm(old_handler)
 
 
 def run_file(path, args=(), keep=False, show_py=False):
