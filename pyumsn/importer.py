@@ -1,12 +1,17 @@
 """``.umsn`` 모듈 불러오기 (import hook).
 
 ``엄슨가져와 내모듈`` 은 ``sys.path`` 에서 ``내모듈.umsn`` (또는 ``내모듈/__init__.umsn``) 을 찾는다.
+
+파인더는 ``sys.meta_path`` 의 ``PathFinder`` 바로 앞에 들어간다. 파이썬 모듈(``.py`` 등)이 있으면
+언제나 그것이 먼저이고, 없거나 ``__init__.py`` 없는 폴더(네임스페이스 패키지)뿐일 때만 ``.umsn`` 을 찾는다.
+그래서 파이썬 프로젝트를 통째로 엄슨으로 바꾸어도 ``패키지/__init__.umsn`` 이 제대로 실행된다.
 """
 
 import importlib.abc
 import importlib.util
 import os
 import sys
+from importlib.machinery import NamespaceLoader, PathFinder
 
 from .sourceio import read_source
 from .translator import umsn_to_py
@@ -33,8 +38,18 @@ class UmsnLoader(importlib.abc.Loader):
         exec(code, module.__dict__)
 
 
+def _is_namespace(spec):
+    return spec.loader is None or isinstance(spec.loader, NamespaceLoader)
+
+
 class UmsnFinder(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path, target=None):
+        spec = PathFinder.find_spec(fullname, path, target)
+        if spec is not None and not _is_namespace(spec):
+            return spec
+        return self.find_umsn_spec(fullname, path) or spec
+
+    def find_umsn_spec(self, fullname, path=None):
         name = fullname.rpartition(".")[2]
         search = sys.path if path is None else path
         for entry in list(search):
@@ -66,5 +81,7 @@ def syntax_error_to_umsn(exc, umsn_source, filename):
 
 def install():
     """import hook 을 한 번만 설치한다."""
-    if not any(isinstance(f, UmsnFinder) for f in sys.meta_path):
-        sys.meta_path.append(UmsnFinder())
+    if any(isinstance(f, UmsnFinder) for f in sys.meta_path):
+        return
+    index = next((i for i, f in enumerate(sys.meta_path) if f is PathFinder), len(sys.meta_path))
+    sys.meta_path.insert(index, UmsnFinder())

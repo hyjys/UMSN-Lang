@@ -70,8 +70,8 @@ pip install .
 
 ```
 pyumsn [옵션]... [파일.umsn | - | -c 코드] [인자]...
-pyumsn -t|-u [-aq] [-o 출력] [파일|폴더]...
-pyumsn -n [-q] [파일|폴더]...
+pyumsn -t|-u [-aq] [-x 패턴]... [--no-copy] [-o 출력] [파일|폴더]...
+pyumsn -n [-q] [-x 패턴]... [파일|폴더]...
 pyumsn -e [파일]...
 pyumsn -w [-M] [검색어]...
 pyumsn --translit 영어이름...  |  --untranslit 엄슨단어...
@@ -84,11 +84,13 @@ pyumsn -c '엄!..하1 ..더해 2..다'   # 코드 문자열 실행
 echo '엄!..하"안녕"..다' | pyumsn   # 표준 입력의 프로그램 실행 (pyumsn - 도 같음)
 pyumsn                              # 터미널이면 대화형 셸 (엄>>>), -i 로도 열림
 pyumsn -t 안녕.umsn                 # 엄슨 → 파이썬 (안녕.py)
-pyumsn -t 폴더/ -o 출력폴더/        # 폴더째 변환, -o - 는 표준 출력
+pyumsn -u 내프로젝트/ -o 엄슨프로젝트/  # 파이썬 프로젝트를 안쪽 폴더까지 통째로 (아래 참고)
+pyumsn -t 안녕.umsn -o -            # -o - 는 표준 출력
 pyumsn -t < 안녕.umsn > 안녕.py     # 파일을 안 주면 표준 입력 → 표준 출력 (필터)
 pyumsn -u hello.py                  # 파이썬 → 엄슨 (hello.umsn)
 pyumsn -ua hello.py                 # 기호 ( ) : , 는 ASCII 그대로 (순한맛, --ascii-symbols)
-pyumsn -n 안녕.umsn examples/       # 영어 이름 등 검사 (폴더는 안의 .umsn 전부)
+pyumsn -n 안녕.umsn examples/       # 영어 이름 등 검사 (폴더는 안쪽 폴더까지 .umsn 전부)
+pyumsn 엄슨프로젝트/                # 폴더의 __main__.umsn 실행 (python 폴더/ 처럼)
 pyumsn -e [파일.umsn]...            # UMSN-IDE
 pyumsn -w print                     # 단어장 검색 (-w 만 주면 전체)
 pyumsn --translit polyfit           # 영어 이름 → 엄슨 음역
@@ -106,6 +108,8 @@ pyumsn -M > docs/VOCABULARY.md      # 전체 단어장을 마크다운으로
 | `-u` | `--to-umsn` | 파이썬 → 엄슨 |
 | `-n` | `--check` | 실행하지 않고 검사만 |
 | `-o 경로` | `--output=경로` | 출력 파일/폴더 (`-` 는 표준 출력, 피연산자가 여럿이면 폴더) |
+| `-x 패턴` | `--exclude=패턴` | (폴더) 이름·경로 패턴에 맞는 파일과 폴더는 건너뜀 (여러 번 가능) |
+| | `--no-copy` | (폴더) 다른 폴더로 변환할 때 나머지 파일을 복사하지 않음 |
 | `-a` | `--ascii-symbols`, `--keep-symbols` | (`-u`) 기호를 ASCII 그대로 |
 | `-q` | `--quiet` | 성공 메시지("만들었슨", "문제 없슨") 끄기 |
 | `-w` | `--words` | 단어장 |
@@ -122,6 +126,27 @@ pyumsn -M > docs/VOCABULARY.md      # 전체 단어장을 마크다운으로
 - 오류 메시지는 표준 오류로, 결과는 표준 출력으로 나갑니다.
 
 `python -m pyumsn ...` 으로도 똑같이 쓸 수 있습니다.
+
+### 프로젝트를 통째로 변환
+
+`-u` / `-t` 에 폴더를 주면 **안쪽 폴더까지 모두** 들어가 프로젝트 전체를 변환합니다.
+
+```bash
+pyumsn -u 내프로젝트 -o 엄슨프로젝트      # 파이썬 프로젝트 → 엄슨 프로젝트
+pyumsn 엄슨프로젝트/main.umsn             # 그대로 실행 (패키지·상대 import·자료 파일 모두 동작)
+pyumsn -t 엄슨프로젝트 -o 되돌린프로젝트  # 엄슨 → 파이썬: 원래 프로젝트와 똑같이 돌아옴
+pyumsn -u 내프로젝트                      # -o 없이: 각 .py 옆에 .umsn 을 만듦 (제자리)
+```
+
+- `-o` 로 다른 폴더에 만들면 변환하지 않는 파일(자료, 설정, README 등)도 같은 자리에 **복사**해서 곧바로 실행할 수 있는
+  프로젝트가 됩니다. 복사하지 않으려면 `--no-copy`. 변환한 파일과 이름이 겹치는 파일은 복사하지 않습니다.
+- `.git`, `__pycache__`, 가상 환경(`.venv`, `pyvenv.cfg` 나 `conda-meta` 가 든 폴더), `node_modules`, `*.egg-info`,
+  `.tox`, `.pytest_cache` 같은 폴더는 건너뜁니다. 더 건너뛰려면 `-x tests`, `-x 'docs/*'`, `-x setup.py` 처럼
+  이름이나 (`/` 로 쓴) 상대 경로 패턴을 줍니다.
+- 출력 폴더가 원본 폴더 안에 있어도 됩니다 (`pyumsn -u . -o 엄슨`). 출력 폴더는 다시 변환하지 않습니다.
+- 파일 하나가 실패해도 나머지는 계속 변환하고, 끝에 `변환 N개, 복사 N개, 실패 N개` 를 알려 줍니다 (종료 상태 1).
+- 엄슨 모듈 불러오기는 파이썬과 같은 규칙입니다: `패키지/__init__.umsn`, 하위 패키지, `엄에서 .. 엄슨가져와 이름`
+  (상대 import) 모두 됩니다. 같은 이름의 `.py` 가 있으면 `.py` 가 먼저입니다.
 
 > 1.x 의 하위 명령(`pyumsn run`, `topy`, `toumsn`, `check`, `ide`, `repl`, `words`)은 2.0 에서 옵션으로 바뀌었습니다.
 > 예전 명령을 쓰면 새 옵션을 알려 줍니다: `run` → 파일만, `topy` → `-t`, `toumsn` → `-u`, `check` → `-n`, `ide` → `-e`,
@@ -227,7 +252,8 @@ pyumsn -M > docs/VOCABULARY.md      # 전체 단어장을 마크다운으로
 엄!..하넘엄.평균엄슨..하배열..다..다
 ```
 
-`.umsn` 파일끼리도 import 됩니다: `엄슨가져와 계산기` → 같은 폴더의 `계산기.umsn`.
+`.umsn` 파일끼리도 import 됩니다: `엄슨가져와 계산기` → 같은 폴더의 `계산기.umsn`,
+`엄슨가져와 꾸러미.모듈` → `꾸러미/__init__.umsn` 과 `꾸러미/모듈.umsn`.
 
 예제: [`examples/`](examples) — 안녕, 구구단, 클래스, 넘파이, 판다스, 맷플롯, 티킨터 계산기.
 
@@ -305,8 +331,8 @@ python -m pytest
 
 ### PyPI 배포
 
-1. `pyumsn/__init__.py` 의 `__version__` 을 올린다 (예: `2.0.0`). 같은 버전은 PyPI 에 다시 올릴 수 없다.
-2. `main` 에 병합한 뒤 GitHub 에서 **Release** 를 만든다. 태그는 `v` + 버전 (예: `v2.0.0`).
+1. `pyumsn/__init__.py` 의 `__version__` 을 올린다 (예: `2.1.0`). 같은 버전은 PyPI 에 다시 올릴 수 없다.
+2. `main` 에 병합한 뒤 GitHub 에서 **Release** 를 만든다. 태그는 `v` + 버전 (예: `v2.1.0`).
 3. `.github/workflows/publish.yml` 이 테스트 → 빌드 → PyPI 업로드를 자동으로 한다 (Trusted Publishing, 토큰 불필요).
    TestPyPI 로 먼저 시험하려면 Actions 탭에서 **Publish** 워크플로를 수동 실행하고 `testpypi` 를 고른다.
 

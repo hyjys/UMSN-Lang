@@ -138,6 +138,115 @@ def test_topy_stdout_and_directory(tmp_path):
     assert (tmp_path / "py" / "구구단.py").exists()
 
 
+def _make_project(root):
+    """패키지·하위 패키지·상대 import·자료 파일·가상 환경이 든 작은 파이썬 프로젝트."""
+    files = {
+        "main.py": ("import json, os\n"
+                    "from app import greet, VERSION\n"
+                    "from app.sub.calc import add\n"
+                    "print(greet(\"엄슨\"), add(1, 2), VERSION)\n"
+                    "with open(os.path.join(os.path.dirname(__file__), \"data\", \"x.json\"),"
+                    " encoding=\"utf-8\") as f:\n"
+                    "    print(json.load(f)[\"a\"])\n"),
+        "app/__init__.py": "from .core import greet\nVERSION = \"1.0\"\n",
+        "app/core.py": "def greet(name):\n    return f\"hi {name}\"\n",
+        "app/sub/__init__.py": "",
+        "app/sub/calc.py": "from .. import VERSION\n\ndef add(a, b):\n    return a + b\n",
+        "app/__main__.py": "import core\nprint(core.greet(\"main\"))\n",
+        "data/x.json": "{\"a\": 7}\n",
+        "README.md": "# 프로젝트\n",
+        "tests/test_x.py": "def test_x():\n    assert True\n",
+        ".venv/pyvenv.cfg": "home = /usr\n",
+        ".venv/lib/junk.py": "x = 1\n",
+        ".git/hooks/hook.py": "x = 1\n",
+        "app/__pycache__/core.cpython-312.pyc": "",
+        "pkg.egg-info/PKG-INFO": "Name: pkg\n",
+    }
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_source(path, text)
+    return files
+
+
+def _tree(root):
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+
+
+def test_project_to_umsn_and_back(tmp_path):
+    src, um, back = tmp_path / "proj", tmp_path / "엄슨", tmp_path / "back"
+    files = _make_project(src)
+    res = pyumsn_cmd("-u", src, "-o", um)
+    assert res.returncode == 0, out(res)[1]
+    assert "변환 7개, 복사 2개" in out(res)[1]
+    assert _tree(um) == ["README.md", "app/__init__.umsn", "app/__main__.umsn", "app/core.umsn",
+                         "app/sub/__init__.umsn", "app/sub/calc.umsn", "data/x.json", "main.umsn",
+                         "tests/test_x.umsn"]
+    # 변환된 엄슨 프로젝트가 그대로 실행된다 (패키지 __init__.umsn, 상대 import, 자료 파일)
+    res = pyumsn_cmd(um / "main.umsn")
+    assert res.returncode == 0, out(res)[1]
+    assert out(res)[0].split() == ["hi", "엄슨", "3", "1.0", "7"]
+    # 폴더를 주면 __main__.umsn 을 실행 (python 폴더/ 처럼)
+    res = pyumsn_cmd(um / "app")
+    assert res.returncode == 0, out(res)[1]
+    assert out(res)[0].strip() == "hi main"
+    # 되돌리면 원래 프로젝트와 똑같다 (건너뛴 폴더 빼고)
+    res = pyumsn_cmd("-tq", um, "-o", back)
+    assert res.returncode == 0 and out(res) == ("", "")
+    expected = sorted(rel for rel in files if not rel.startswith((".venv", ".git", "pkg.egg-info"))
+                      and "__pycache__" not in rel)
+    assert _tree(back) == expected
+    for rel in expected:
+        assert (back / rel).read_bytes() == (src / rel).read_bytes(), rel
+
+
+def test_project_exclude_no_copy_and_nested_output(tmp_path):
+    src = tmp_path / "proj"
+    _make_project(src)
+    # 출력 폴더가 원본 안에 있어도 되고, 다시 실행해도 출력 폴더는 변환하지 않는다
+    for _ in range(2):
+        res = pyumsn_cmd("-u", src, "-o", src / "엄슨", "-x", "tests", "--no-copy")
+        assert res.returncode == 0, out(res)[1]
+    assert _tree(src / "엄슨") == ["app/__init__.umsn", "app/__main__.umsn", "app/core.umsn",
+                                  "app/sub/__init__.umsn", "app/sub/calc.umsn", "main.umsn"]
+    # 제자리 변환: 파일 옆에 만들고 아무것도 복사하지 않는다
+    res = pyumsn_cmd("-uq", src, "-x", "엄슨", "-x", "app/sub")
+    assert res.returncode == 0, out(res)[1]
+    assert (src / "app" / "core.umsn").exists() and (src / "tests" / "test_x.umsn").exists()
+    assert not (src / "app" / "sub" / "calc.umsn").exists()
+    assert not (src / ".venv" / "lib" / "junk.umsn").exists()
+    # 검사도 같은 규칙으로 폴더를 훑는다
+    res = pyumsn_cmd("-n", src, "-x", "tests")
+    assert res.returncode == 0, out(res)[1]
+    checked = out(res)[0]
+    assert "calc.umsn" in checked and "test_x" not in checked and "junk" not in checked
+
+
+def test_project_topy_skips_clashing_copies(tmp_path):
+    src = tmp_path / "um"
+    src.mkdir()
+    write_source(src / "a.umsn", "엄!..하1..다\n")
+    write_source(src / "a.py", "print(2)\n")
+    write_source(src / "b.py", "print(3)\n")
+    res = pyumsn_cmd("-t", src, "-o", tmp_path / "py")
+    assert res.returncode == 0, out(res)[1]
+    assert "복사하지 않았슨" in out(res)[1]
+    assert read_source(tmp_path / "py" / "a.py") == "print(1)\n"
+    assert read_source(tmp_path / "py" / "b.py") == "print(3)\n"
+
+
+def test_import_hook_prefers_py_and_finds_umsn_packages(tmp_path):
+    write_source(tmp_path / "둘.py", "값 = 'py'\n")
+    write_source(tmp_path / "둘.umsn", "값 ..은 '엄슨'\n")
+    (tmp_path / "꾸러미").mkdir()
+    write_source(tmp_path / "꾸러미" / "__init__.umsn", "값 ..은 '꾸러미'\n")
+    write_source(tmp_path / "메인.umsn",
+                 "엄슨가져와 둘..고 꾸러미\n엄!..하둘.값..고 꾸러미.값..다\n")
+    res = pyumsn_cmd(tmp_path / "메인.umsn")
+    assert res.returncode == 0, out(res)[1]
+    assert out(res)[0].split() == ["py", "꾸러미"]
+
+
 def test_check_and_words():
     assert pyumsn_cmd("-n", EXAMPLES / "안녕.umsn").returncode == 0
     res = pyumsn_cmd("-w", "print")
@@ -227,7 +336,10 @@ def test_options_after_operands_and_bundling(tmp_path):
 
 def test_usage_errors():
     cases = [
-        (["-x"], "알 수 없는 옵션 -- 'x'"),
+        (["-z"], "알 수 없는 옵션 -- 'z'"),
+        (["-x"], "값이 필요하슨"),
+        (["-x", "a", "a.umsn"], "'-x'"),
+        (["--no-copy", "-n", "a.umsn"], "'--no-copy'"),
         (["--nope"], "알 수 없는 옵션 '--nope'"),
         (["-o"], "값이 필요하슨"),
         (["--to", "a.umsn"], "헷갈리슨"),
