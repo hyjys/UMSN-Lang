@@ -86,10 +86,8 @@ def _restore_sigterm(old):
             pass
 
 
-def run_file(path, args=(), keep=False, show_py=False):
-    """엄슨 파일을 실행하고 종료 코드를 돌려준다."""
-    path = Path(path).resolve()
-    tmp = prepare(path)
+def _run(tmp, target, args, keep, show_py, env):
+    """임시 .py 를 하위 프로세스로 실행하고 종료 코드를 돌려준다."""
     old_handler = _catch_sigterm()
     try:
         if show_py:
@@ -100,7 +98,7 @@ def run_file(path, args=(), keep=False, show_py=False):
         elif keep:
             sys.stderr.write("임시 파이썬 파일: %s\n" % tmp)
             sys.stderr.flush()
-        proc = subprocess.Popen(build_command(tmp, path, args), env=child_env(keep))
+        proc = subprocess.Popen(build_command(tmp, target, args), env=env)
         try:
             return proc.wait()
         except KeyboardInterrupt:
@@ -116,3 +114,32 @@ def run_file(path, args=(), keep=False, show_py=False):
         _restore_sigterm(old_handler)
         if not keep:
             remove_quietly(tmp)
+
+
+def run_file(path, args=(), keep=False, show_py=False):
+    """엄슨 파일을 실행하고 종료 코드를 돌려준다."""
+    path = Path(path).resolve()
+    tmp = prepare(path)
+    return _run(tmp, path, args, keep, show_py, child_env(keep))
+
+
+SOURCE_NAME_ENV = "PYUMSN_SOURCE_NAME"
+
+
+def run_source(source, name="<string>", args=(), keep=False, show_py=False):
+    """파일이 아닌 엄슨 코드(``-c`` 코드, 표준 입력)를 실행하고 종료 코드를 돌려준다.
+
+    오류 추적 기록에 엄슨 줄이 보이도록 원본도 임시 ``.umsn`` 파일로 넘기고,
+    launcher 는 그것을 읽자마자 지운 뒤 ``name`` 이라는 이름으로 실행한다.
+    """
+    py = umsn_to_py(source, filename=name)
+    tmp = make_temp_py(py)
+    fd, tmp_umsn = tempfile.mkstemp(prefix="umsn_", suffix=".umsn")
+    os.close(fd)
+    write_source(tmp_umsn, source)
+    env = child_env(keep)
+    env[SOURCE_NAME_ENV] = name
+    try:
+        return _run(tmp, tmp_umsn, args, keep, show_py, env)
+    finally:
+        remove_quietly(tmp_umsn)

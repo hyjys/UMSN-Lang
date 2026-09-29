@@ -1,16 +1,132 @@
-"""``pyumsn`` 명령줄 도구."""
+"""``pyumsn`` 명령줄 도구.
 
-import argparse
+유닉스(POSIX/GNU) 관례를 따른다.
+
+- 짧은 옵션은 ``-t``, 묶어 쓰기 ``-tq``, 값은 ``-o 파일`` 또는 ``-o파일``.
+- 긴 옵션은 ``--output=파일`` 또는 ``--output 파일``, 헷갈리지 않으면 줄여 써도 된다 (``--out``).
+- ``--`` 뒤는 모두 피연산자, ``-`` 는 표준 입력/출력.
+- 실행할 때는 첫 피연산자(파일)에서 옵션 읽기를 멈춘다: 그 뒤는 모두 프로그램 인자 (``python`` 과 같음).
+  변환·검사처럼 파일을 여러 개 받는 모드에서는 옵션과 파일을 섞어 써도 된다 (GNU 방식).
+- 종료 상태: 0 성공, 1 오류, 2 잘못된 사용법. 실행할 때는 프로그램의 종료 상태.
+"""
+
+import getopt
 import os
+import re
 import sys
 from pathlib import Path
 
 from . import __version__, vocab
 from .errors import UmsnEncodingError, UmsnError, UmsnSyntaxError
-from .sourceio import read_source, write_source
+from .sourceio import decode_source, read_source, write_source
 from .translator import check_umsn, py_to_umsn, transliterate, umsn_to_py, untransliterate
 
+PROG = "pyumsn"
 IDE_PATH = Path(__file__).resolve().parent / "ide" / "umsn_ide.umsn"
+STDIN_NAME = "<stdin>"
+
+SHORT_OPTS = "hVc:kpietunwMo:aq"
+LONG_OPTS = ["help", "version", "command=", "keep", "show-py", "interactive", "ide", "edit",
+             "to-py", "to-umsn", "check", "words", "markdown", "translit", "untranslit",
+             "output=", "ascii-symbols", "keep-symbols", "quiet"]
+
+# 옵션 → (모드, 설정 이름)
+_MODE_OPTS = {
+    "-c": "command", "--command": "command",
+    "-i": "repl", "--interactive": "repl",
+    "-e": "ide", "--ide": "ide", "--edit": "ide",
+    "-t": "topy", "--to-py": "topy",
+    "-u": "toumsn", "--to-umsn": "toumsn",
+    "-n": "check", "--check": "check",
+    "-w": "words", "--words": "words",
+    "--translit": "translit",
+    "--untranslit": "untranslit",
+}
+_FLAG_OPTS = {
+    "-k": "keep", "--keep": "keep",
+    "-p": "show_py", "--show-py": "show_py",
+    "-a": "keep_symbols", "--ascii-symbols": "keep_symbols", "--keep-symbols": "keep_symbols",
+    "-q": "quiet", "--quiet": "quiet",
+    "-M": "markdown", "--markdown": "markdown",
+}
+_MODE_LABEL = {
+    "command": "-c", "repl": "-i", "ide": "-e", "topy": "-t", "toumsn": "-u", "check": "-n",
+    "words": "-w", "translit": "--translit", "untranslit": "--untranslit",
+}
+# 옵션 → 함께 쓸 수 있는 모드
+_FLAG_MODES = {
+    "keep": ("run", "command"), "show_py": ("run", "command"),
+    "keep_symbols": ("toumsn",), "output": ("topy", "toumsn"),
+    "quiet": ("topy", "toumsn", "check"), "markdown": ("words",),
+}
+_FLAG_LABEL = {"keep": "-k", "show_py": "-p", "keep_symbols": "-a", "output": "-o",
+               "quiet": "-q", "markdown": "-M"}
+# 파일을 여러 개 받는 모드: 옵션과 피연산자를 섞어 써도 된다
+_PERMUTE_MODES = ("topy", "toumsn", "check", "ide", "words", "translit", "untranslit")
+# 예전(1.x) 하위 명령 → 새 옵션
+_OLD_COMMANDS = {"run": "pyumsn 파일.umsn", "topy": "pyumsn -t", "toumsn": "pyumsn -u",
+                 "check": "pyumsn -n", "ide": "pyumsn -e", "repl": "pyumsn -i",
+                 "words": "pyumsn -w"}
+
+USAGE = """\
+사용법: pyumsn [옵션]... [파일.umsn | - | -c 코드] [인자]...
+  또는: pyumsn -t|-u [-aq] [-o 출력] [파일|폴더]...
+  또는: pyumsn -n [-q] [파일|폴더]...
+  또는: pyumsn -e [파일]...
+  또는: pyumsn -w [-M] [검색어]...
+  또는: pyumsn --translit 영어이름...  |  --untranslit 엄슨단어..."""
+
+HELP = USAGE + """
+
+엄슨(UMSN) 프로그래밍 언어 도구 — 실행, 엄슨 ↔ 파이썬 변환, 검사, IDE.
+
+파일을 주면 실행합니다. 파일 뒤의 인자는 옵션처럼 보여도 모두 프로그램에 넘어갑니다.
+파일이 없으면 터미널에서는 대화형 셸을 열고, 파이프로 들어오면 표준 입력을 실행합니다.
+
+실행:
+  -c, --command=코드     코드 문자열을 실행 (뒤의 인자는 프로그램에 넘김)
+  -k, --keep             임시 파이썬 파일을 지우지 않음
+  -p, --show-py          변환된 파이썬 코드를 먼저 보여줌 (표준 오류로)
+  -i, --interactive      엄슨 대화형 셸 (엄>>>)
+  -e, --ide, --edit      UMSN-IDE 로 파일 열기
+
+변환·검사 (파일이 없거나 '-' 이면 표준 입력을 읽어 표준 출력으로):
+  -t, --to-py            엄슨 → 파이썬 (파일.umsn → 파일.py, 폴더는 통째로)
+  -u, --to-umsn          파이썬 → 엄슨 (파일.py → 파일.umsn)
+  -n, --check            실행하지 않고 검사만 (영어 이름 등)
+  -o, --output=경로      출력 파일 또는 폴더 ('-' 는 표준 출력).
+                         피연산자가 여럿이면 폴더로 봅니다.
+  -a, --ascii-symbols    (-u) 괄호·연산자 기호를 ASCII 그대로 둠 (--keep-symbols)
+  -q, --quiet            성공 메시지를 출력하지 않음
+
+단어장:
+  -w, --words            단어장 보기 (검색어를 주면 그 말이 든 단어만)
+  -M, --markdown         단어장 전체를 마크다운 표로 (-w 를 뜻함)
+      --translit         영어 이름 → 엄슨 음역
+      --untranslit       엄슨 단어·음역 → 파이썬 이름
+
+  -h, --help             이 도움말을 보여주고 끝냄
+  -V, --version          버전을 보여주고 끝냄
+
+짧은 옵션은 묶어 쓸 수 있고 (-tq), 긴 옵션은 헷갈리지 않을 만큼 줄여 쓸 수 있습니다 (--to-p).
+'--' 뒤의 인자는 옵션으로 읽지 않습니다.
+
+종료 상태: 0 성공, 1 오류, 2 잘못된 사용법. 실행할 때는 프로그램의 종료 상태.
+
+예:
+  pyumsn 안녕.umsn 가 나            안녕.umsn 실행 (sys.argv[1:] = ['가', '나'])
+  pyumsn -t 안녕.umsn               안녕.py 만들기
+  pyumsn -t < 안녕.umsn > 안녕.py   표준 입력 → 표준 출력
+  pyumsn -ua hello.py               hello.umsn 만들기 (기호는 ASCII)
+  pyumsn -t examples -o build       폴더째 변환
+  pyumsn -n examples                폴더 안 .umsn 모두 검사
+  pyumsn -c '엄!..하1 ..더해 2..다'
+  echo '엄!..하"안녕"..다' | pyumsn
+"""
+
+
+class UsageError(Exception):
+    """잘못된 명령줄 (종료 상태 2)."""
 
 
 def _setup_stdio():
@@ -27,56 +143,22 @@ def _say(text, err=False):
     stream.flush()
 
 
-# ---------------------------------------------------------------------------
-# 변환 (topy / toumsn)
-# ---------------------------------------------------------------------------
-def _convert_one(src_path, out_path, direction, keep_symbols):
-    text = read_source(src_path)
-    if direction == "topy":
-        result = umsn_to_py(text, filename=str(src_path))
+def _write_stdout(text):
+    """변환 결과를 표준 출력에 그대로 (윈도우에서도 줄바꿈을 바꾸지 않고) 쓴다."""
+    sys.stdout.flush()
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is not None:
+        buffer.write(text.encode("utf-8"))
+        buffer.flush()
     else:
-        result = py_to_umsn(text, filename=str(src_path), keep_symbols=keep_symbols)
-    if out_path == "-":
-        sys.stdout.write(result)
+        sys.stdout.write(text)
         sys.stdout.flush()
-        return
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    write_source(out_path, result)
-    _say("만들었슨: %s → %s" % (src_path, out_path), err=True)
 
 
-def _convert(args, direction):
-    src_suffix, dst_suffix = (".umsn", ".py") if direction == "topy" else (".py", ".umsn")
-    source = Path(args.source)
-    if not source.exists():
-        _say("엄슨 오류! 파일이나 폴더가 없슨: %s" % source, err=True)
-        return 1
-    keep = getattr(args, "keep_symbols", False)
-    failed = 0
-    if source.is_dir():
-        if args.output == "-":
-            _say("엄슨 오류! 폴더는 표준 출력(-)으로 변환할 수 없슨.", err=True)
-            return 1
-        out_root = Path(args.output) if args.output else source
-        files = sorted(p for p in source.rglob("*" + src_suffix) if p.is_file())
-        if not files:
-            _say("변환할 %s 파일이 없슨: %s" % (src_suffix, source), err=True)
-        for path in files:
-            target = out_root / path.relative_to(source).with_suffix(dst_suffix)
-            try:
-                _convert_one(path, target, direction, keep)
-            except UmsnError as exc:
-                failed += 1
-                _report_error(exc)
-        return 1 if failed else 0
-    out = args.output or str(source.with_suffix(dst_suffix))
-    try:
-        _convert_one(source, out, direction, keep)
-    except UmsnError as exc:
-        _report_error(exc)
-        return 1
-    return 0
+def _read_stdin():
+    buffer = getattr(sys.stdin, "buffer", None)
+    data = buffer.read() if buffer is not None else sys.stdin.read().encode("utf-8")
+    return decode_source(data, STDIN_NAME)
 
 
 def _report_error(exc):
@@ -87,33 +169,264 @@ def _report_error(exc):
 
 
 # ---------------------------------------------------------------------------
-# 명령
+# 명령줄 읽기
 # ---------------------------------------------------------------------------
-def cmd_run(args):
-    from .runner import run_file
+_GETOPT_MESSAGES = [
+    (r"option -(\S) not recognized", "알 수 없는 옵션 -- '%s'"),
+    (r"option -(\S) requires argument", "옵션에 값이 필요하슨 -- '%s'"),
+    (r"option --(\S+) not recognized", "알 수 없는 옵션 '--%s'"),
+    (r"option --(\S+) not a unique prefix", "옵션 '--%s' 가 여러 옵션과 헷갈리슨"),
+    (r"option --(\S+) requires argument", "옵션 '--%s' 에 값이 필요하슨"),
+    (r"option --(\S+) must not have an argument", "옵션 '--%s' 에는 값을 줄 수 없슨"),
+]
+
+
+def _getopt_message(exc):
+    for pattern, text in _GETOPT_MESSAGES:
+        match = re.match(pattern, exc.msg)
+        if match:
+            return text % match.group(1)
+    return exc.msg
+
+
+def _getopt(argv, permute):
+    parse = getopt.gnu_getopt if permute else getopt.getopt
     try:
-        return run_file(args.file, args.args, keep=args.keep, show_py=args.show_py)
+        return parse(argv, SHORT_OPTS, LONG_OPTS)
+    except getopt.GetoptError as exc:
+        raise UsageError(_getopt_message(exc)) from None
+
+
+class Options(object):
+    def __init__(self):
+        self.mode = None
+        self.mode_opt = None
+        self.code = None
+        self.output = None
+        self.given = set()
+        self.keep = self.show_py = self.keep_symbols = self.quiet = self.markdown = False
+        self.help = self.version = False
+        self.operands = []
+
+    def set_mode(self, mode, opt):
+        if self.mode is not None and self.mode != mode:
+            raise UsageError("'%s' 와 '%s' 는 함께 쓸 수 없슨" % (self.mode_opt, opt))
+        self.mode, self.mode_opt = mode, opt
+
+
+def _collect(pairs, operands):
+    opts = Options()
+    for opt, value in pairs:
+        if opt in ("-h", "--help"):
+            opts.help = True
+        elif opt in ("-V", "--version"):
+            opts.version = True
+        elif opt in _MODE_OPTS:
+            opts.set_mode(_MODE_OPTS[opt], opt)
+            if opt in ("-c", "--command"):
+                opts.code = value
+        elif opt in ("-o", "--output"):
+            opts.output = value
+            opts.given.add("output")
+        else:
+            name = _FLAG_OPTS[opt]
+            setattr(opts, name, True)
+            opts.given.add(name)
+    if opts.markdown and opts.mode is None:
+        opts.set_mode("words", "-M")
+    opts.operands = list(operands)
+    return opts
+
+
+def parse_args(argv):
+    """명령줄을 읽어 :class:`Options` 를 돌려준다. 잘못되면 :class:`UsageError`."""
+    opts = _collect(*_getopt(argv, permute=False))
+    if opts.mode in _PERMUTE_MODES:
+        # 파일을 여러 개 받는 모드는 옵션이 파일 뒤에 와도 된다 (POSIXLY_CORRECT 면 따르지 않음).
+        opts = _collect(*_getopt(argv, permute=True))
+    if opts.help or opts.version:
+        return opts
+    mode = opts.mode or "run"
+    for name in sorted(opts.given):
+        if mode not in _FLAG_MODES[name]:
+            allowed = "·".join(_MODE_LABEL.get(m, "파일 실행") for m in _FLAG_MODES[name])
+            raise UsageError("'%s' 는 %s 와 함께만 쓸 수 있슨" % (_FLAG_LABEL[name], allowed))
+    if mode == "repl" and opts.operands:
+        raise UsageError("'-i' 에는 파일을 줄 수 없슨 (실행하려면 'pyumsn 파일.umsn')")
+    if mode in ("translit", "untranslit") and not opts.operands:
+        raise UsageError("'%s' 에 바꿀 이름을 주세요" % _MODE_LABEL[mode])
+    if mode == "words" and opts.markdown and opts.operands:
+        raise UsageError("'-M' 은 검색어 없이 단어장 전체를 출력하슨")
+    if mode == "run" and opts.operands:
+        first = opts.operands[0]
+        if first in _OLD_COMMANDS and not os.path.exists(first):
+            raise UsageError("하위 명령 '%s' 는 없어졌슨. 대신 '%s' 를 쓰세요"
+                             % (first, _OLD_COMMANDS[first]))
+    return opts
+
+
+# ---------------------------------------------------------------------------
+# 실행
+# ---------------------------------------------------------------------------
+def _stdin_is_tty():
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def cmd_run(opts):
+    from .runner import run_file, run_source
+    if not opts.operands:
+        if _stdin_is_tty():
+            return cmd_repl(opts)
+        target, args = "-", []
+    else:
+        target, args = opts.operands[0], opts.operands[1:]
+    try:
+        if target == "-":
+            return run_source(_read_stdin(), STDIN_NAME, args, keep=opts.keep, show_py=opts.show_py)
+        return run_file(target, args, keep=opts.keep, show_py=opts.show_py)
     except FileNotFoundError:
-        _say("엄슨 오류! 파일이 없슨: %s" % args.file, err=True)
+        _say("엄슨 오류! 파일이 없슨: %s" % target, err=True)
+        return 1
+    except IsADirectoryError:
+        _say("엄슨 오류! 폴더는 실행할 수 없슨: %s" % target, err=True)
         return 1
     except UmsnError as exc:
         _report_error(exc)
         return 1
 
 
-def cmd_topy(args):
-    return _convert(args, "topy")
+def cmd_command(opts):
+    from .runner import run_source
+    try:
+        return run_source(opts.code, "<string>", opts.operands, keep=opts.keep, show_py=opts.show_py)
+    except UmsnError as exc:
+        _report_error(exc)
+        return 1
 
 
-def cmd_toumsn(args):
-    return _convert(args, "toumsn")
+def cmd_repl(opts):
+    from .repl import main
+    return main()
 
 
-def cmd_check(args):
-    bad = 0
-    for name in args.files:
+def cmd_ide(opts):
+    from .runner import run_file
+    try:
+        return run_file(IDE_PATH, [os.path.abspath(f) for f in opts.operands])
+    except UmsnError as exc:
+        _report_error(exc)
+        return 1
+
+
+# ---------------------------------------------------------------------------
+# 변환 (-t / -u)
+# ---------------------------------------------------------------------------
+def _translate(text, name, direction, keep_symbols):
+    if direction == "topy":
+        return umsn_to_py(text, filename=name)
+    return py_to_umsn(text, filename=name, keep_symbols=keep_symbols)
+
+
+def _emit(result, src_name, out_path, quiet):
+    if out_path == "-":
+        _write_stdout(result)
+        return
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    write_source(out_path, result)
+    if not quiet:
+        _say("만들었슨: %s → %s" % (src_name, out_path), err=True)
+
+
+def _convert(opts, direction):
+    src_suffix, dst_suffix = (".umsn", ".py") if direction == "topy" else (".py", ".umsn")
+    operands = opts.operands or ["-"]
+    output = opts.output
+    many = len(operands) > 1
+    if many and output and output != "-" and Path(output).is_file():
+        _say("엄슨 오류! 여러 개를 변환할 때 '-o' 는 폴더여야 하슨: %s" % output, err=True)
+        return 1
+    failed = 0
+
+    def convert(text_source, src_name, target):
+        nonlocal failed
         try:
-            source = read_source(name)
+            text = text_source()
+            _emit(_translate(text, src_name, direction, opts.keep_symbols), src_name, target, opts.quiet)
+        except UmsnError as exc:
+            failed += 1
+            _report_error(exc)
+        except OSError as exc:
+            failed += 1
+            _say("엄슨 오류! %s" % exc, err=True)
+
+    for operand in operands:
+        if operand == "-":
+            target = output if (output and not many) else "-"
+            convert(_read_stdin, STDIN_NAME, target)
+            continue
+        source = Path(operand)
+        if not source.exists():
+            _say("엄슨 오류! 파일이나 폴더가 없슨: %s" % source, err=True)
+            failed += 1
+            continue
+        if source.is_dir():
+            if output == "-":
+                _say("엄슨 오류! 폴더는 표준 출력(-)으로 변환할 수 없슨: %s" % source, err=True)
+                failed += 1
+                continue
+            if not output:
+                out_root = source
+            elif many:
+                out_root = Path(output) / source.resolve().name
+            else:
+                out_root = Path(output)
+            files = sorted(p for p in source.rglob("*" + src_suffix) if p.is_file())
+            if not files and not opts.quiet:
+                _say("변환할 %s 파일이 없슨: %s" % (src_suffix, source), err=True)
+            for path in files:
+                target = out_root / path.relative_to(source).with_suffix(dst_suffix)
+                convert(lambda p=path: read_source(p), str(path), target)
+            continue
+        if output == "-" or (output and not many):
+            target = output
+        elif output:
+            target = Path(output) / source.with_suffix(dst_suffix).name
+        else:
+            target = source.with_suffix(dst_suffix)
+        convert(lambda p=source: read_source(p), str(source), target)
+    return 1 if failed else 0
+
+
+def cmd_topy(opts):
+    return _convert(opts, "topy")
+
+
+def cmd_toumsn(opts):
+    return _convert(opts, "toumsn")
+
+
+# ---------------------------------------------------------------------------
+# 검사 (-n)
+# ---------------------------------------------------------------------------
+def cmd_check(opts):
+    targets = []
+    for operand in opts.operands or ["-"]:
+        path = Path(operand)
+        if operand != "-" and path.is_dir():
+            targets += [str(p) for p in sorted(path.rglob("*.umsn")) if p.is_file()]
+        else:
+            targets.append(operand)
+    bad = 0
+    for name in targets:
+        try:
+            if name == "-":
+                name, source = STDIN_NAME, _read_stdin()
+            else:
+                source = read_source(name)
         except (OSError, UmsnEncodingError) as exc:
             _say("엄슨 오류! %s" % exc, err=True)
             bad += 1
@@ -122,29 +435,17 @@ def cmd_check(args):
         if problems:
             bad += 1
             _say(UmsnSyntaxError(problems, filename=name, source=source).report(), err=True)
-        else:
+        elif not opts.quiet:
             _say("문제 없슨! %s" % name)
     return 1 if bad else 0
 
 
-def cmd_ide(args):
-    from .runner import run_file
-    extra = [os.path.abspath(args.file)] if args.file else []
-    try:
-        return run_file(IDE_PATH, extra)
-    except UmsnError as exc:
-        _report_error(exc)
-        return 1
-
-
-def cmd_repl(args):
-    from .repl import main
-    return main()
-
-
+# ---------------------------------------------------------------------------
+# 단어장 (-w / -M / --translit / --untranslit)
+# ---------------------------------------------------------------------------
 def _markdown_table():
     lines = ["# 엄슨(UMSN) 단어장", "",
-             "`pyumsn words --markdown` 으로 자동 생성한 문서입니다.", ""]
+             "`pyumsn --markdown` 으로 자동 생성한 문서입니다.", ""]
     groups = [("예약어", vocab.KEYWORDS), ("내장 함수·상수·예외", vocab.BUILTINS),
               ("관례·특수 이름", vocab.SPECIAL_NAMES), ("메소드·자주 쓰는 인자", vocab.METHODS)]
     groups += [("라이브러리 — " + title, table) for title, table in vocab.LIBRARY_GROUPS.items()]
@@ -167,91 +468,78 @@ def _markdown_table():
     return "\n".join(lines)
 
 
-def cmd_words(args):
-    if args.translit:
-        for name in args.translit:
-            if name in vocab.PY2UMSN:
-                _say("%s → %s  (사전 단어)" % (name, vocab.PY2UMSN[name]))
-            else:
-                try:
-                    _say("%s → %s" % (name, transliterate(name)))
-                except ValueError as exc:
-                    _say("엄슨 오류! %s" % exc, err=True)
-                    return 1
+def cmd_words(opts):
+    if opts.markdown:
+        _write_stdout(_markdown_table())
         return 0
-    if args.untranslit:
-        for word in args.untranslit:
-            py = vocab.UMSN2PY.get(word) or vocab.UMSN2SYMBOL.get(word) or untransliterate(word)
-            _say("%s → %s" % (word, py if py else "(엄슨 단어/음역이 아닙니다)"))
-        return 0
-    if args.markdown:
-        sys.stdout.write(_markdown_table())
-        return 0
-    query = (args.search or "").lower()
+    queries = [q.lower() for q in opts.operands]
     for title, um, py in vocab.all_words():
-        if query and query not in um.lower() and query not in py.lower() and query not in title.lower():
+        if queries and not any(q in um.lower() or q in py.lower() or q in title.lower()
+                               for q in queries):
             continue
         _say("%-18s %-22s %s" % (um, py, title))
     return 0
 
 
-def build_parser():
-    parser = argparse.ArgumentParser(
-        prog="pyumsn",
-        description="엄슨(UMSN) 프로그래밍 언어 도구 — 엄슨 ↔ 파이썬 변환, 실행, IDE",
-        epilog="예) pyumsn run 안녕.umsn  |  pyumsn topy 안녕.umsn  |  pyumsn toumsn hello.py  |  pyumsn ide")
-    parser.add_argument("--version", "-V", action="version", version="PyUMSN %s" % __version__)
-    sub = parser.add_subparsers(dest="command", metavar="명령")
+def cmd_translit(opts):
+    bad = 0
+    for name in opts.operands:
+        if name in vocab.PY2UMSN:
+            _say("%s → %s  (사전 단어)" % (name, vocab.PY2UMSN[name]))
+            continue
+        try:
+            _say("%s → %s" % (name, transliterate(name)))
+        except ValueError as exc:
+            _say("엄슨 오류! %s" % exc, err=True)
+            bad += 1
+    return 1 if bad else 0
 
-    p = sub.add_parser("run", help="엄슨 파일 실행 (임시 파이썬 파일을 만들어 실행)")
-    p.add_argument("file", help=".umsn 파일")
-    p.add_argument("args", nargs=argparse.REMAINDER, help="프로그램에 넘길 인자")
-    p.add_argument("--keep", action="store_true", help="임시 파이썬 파일을 지우지 않음")
-    p.add_argument("--show-py", action="store_true", help="변환된 파이썬 코드를 먼저 보여줌")
-    p.set_defaults(func=cmd_run)
 
-    p = sub.add_parser("topy", help="엄슨 → 파이썬 변환 (파일 또는 폴더)")
-    p.add_argument("source", help=".umsn 파일 또는 폴더")
-    p.add_argument("-o", "--output", help="출력 파일/폴더 ('-' 는 화면)")
-    p.set_defaults(func=cmd_topy)
+def cmd_untranslit(opts):
+    bad = 0
+    for word in opts.operands:
+        py = vocab.UMSN2PY.get(word) or vocab.UMSN2SYMBOL.get(word) or untransliterate(word)
+        if py:
+            _say("%s → %s" % (word, py))
+        else:
+            _say("엄슨 오류! '%s' 는 엄슨 단어나 음역이 아니슨" % word, err=True)
+            bad += 1
+    return 1 if bad else 0
 
-    p = sub.add_parser("toumsn", help="파이썬 → 엄슨 변환 (파일 또는 폴더)")
-    p.add_argument("source", help=".py 파일 또는 폴더")
-    p.add_argument("-o", "--output", help="출력 파일/폴더 ('-' 는 화면)")
-    p.add_argument("--keep-symbols", action="store_true", help="괄호·연산자 기호는 ASCII 그대로 둠")
-    p.set_defaults(func=cmd_toumsn)
 
-    p = sub.add_parser("check", help="엄슨 파일 검사 (영어 이름 등)")
-    p.add_argument("files", nargs="+", help=".umsn 파일")
-    p.set_defaults(func=cmd_check)
-
-    p = sub.add_parser("ide", help="UMSN-IDE 실행")
-    p.add_argument("file", nargs="?", help="열 파일")
-    p.set_defaults(func=cmd_ide)
-
-    p = sub.add_parser("repl", help="엄슨 대화형 셸")
-    p.set_defaults(func=cmd_repl)
-
-    p = sub.add_parser("words", help="엄슨 단어장 보기 / 음역")
-    p.add_argument("--search", "-s", help="찾을 말 (엄슨 또는 파이썬)")
-    p.add_argument("--markdown", action="store_true", help="마크다운 표로 출력")
-    p.add_argument("--translit", nargs="+", metavar="영어이름", help="영어 이름 → 엄슨 음역")
-    p.add_argument("--untranslit", nargs="+", metavar="엄슨단어", help="엄슨 단어/음역 → 파이썬")
-    p.set_defaults(func=cmd_words)
-    return parser
+COMMANDS = {
+    "run": cmd_run, "command": cmd_command, "repl": cmd_repl, "ide": cmd_ide,
+    "topy": cmd_topy, "toumsn": cmd_toumsn, "check": cmd_check,
+    "words": cmd_words, "translit": cmd_translit, "untranslit": cmd_untranslit,
+}
 
 
 def main(argv=None):
     _setup_stdio()
     argv = sys.argv[1:] if argv is None else list(argv)
-    if argv and argv[0].lower().endswith(".umsn"):
-        argv = ["run"] + argv
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    if not getattr(args, "func", None):
-        parser.print_help()
+    try:
+        opts = parse_args(argv)
+    except UsageError as exc:
+        _say("%s: %s" % (PROG, exc), err=True)
+        _say("자세한 사용법은 '%s --help' 를 보세요." % PROG, err=True)
+        return 2
+    if opts.help:
+        _write_stdout(HELP)
         return 0
-    return args.func(args)
+    if opts.version:
+        _say("PyUMSN %s" % __version__)
+        return 0
+    try:
+        return COMMANDS[opts.mode or "run"](opts)
+    except KeyboardInterrupt:
+        return 130
+    except BrokenPipeError:
+        # pyumsn -w | head 처럼 읽는 쪽이 먼저 닫혀도 조용히 끝낸다
+        try:
+            sys.stdout = open(os.devnull, "w")
+        except OSError:
+            pass
+        return 1
 
 
 if __name__ == "__main__":

@@ -34,32 +34,40 @@ def temp_files():
 
 
 def test_run_hello():
-    res = pyumsn_cmd("run", EXAMPLES / "안녕.umsn", input_text="엄슨\n")
+    res = pyumsn_cmd(EXAMPLES / "안녕.umsn", input_text="엄슨\n")
     stdout, stderr = out(res)
     assert res.returncode == 0, stderr
     assert "안녕, 엄슨!" in stdout
     assert "반가워요, 엄슨님!" in stdout
 
 
-def test_shorthand_and_args(tmp_path):
+def test_program_args_after_file(tmp_path):
     prog = tmp_path / "인자.umsn"
     write_source(prog, "엄슨가져와 시스템엄슨\n엄!..하시스템엄슨.인자목록엄슨..엄1..한..슨..다\n")
     res = pyumsn_cmd(prog, "가", "나")
     assert res.returncode == 0, out(res)[1]
     assert "['가', '나']" in out(res)[0]
+    # 파일 뒤의 옵션처럼 보이는 인자는 프로그램 몫 (python 과 같음)
+    res = pyumsn_cmd(prog, "-t", "--keep", "--", "-x")
+    assert "['-t', '--keep', '--', '-x']" in out(res)[0]
+    # '--' 뒤는 '-' 로 시작해도 파일
+    dash = tmp_path / "-대시.umsn"
+    write_source(dash, '엄!..하"대시"..다\n')
+    res = pyumsn_cmd("--", dash.name, cwd=tmp_path)
+    assert out(res)[0].strip() == "대시"
 
 
 def test_run_exit_code(tmp_path):
     prog = tmp_path / "끝.umsn"
     write_source(prog, "엄슨가져와 시스템엄슨\n시스템엄슨.엄나가..하3..다\n")
-    assert pyumsn_cmd("run", prog).returncode == 3
+    assert pyumsn_cmd(prog).returncode == 3
 
 
 def test_run_rejects_english_before_running(tmp_path):
     prog = tmp_path / "영어.umsn"
     write_source(prog, '엄!..하"실행되면 안 됨"..다\ncount ..은 1\n')
     before = temp_files()
-    res = pyumsn_cmd("run", prog)
+    res = pyumsn_cmd(prog)
     stdout, stderr = out(res)
     assert res.returncode == 1
     assert "실행되면 안 됨" not in stdout
@@ -71,7 +79,7 @@ def test_run_rejects_english_before_running(tmp_path):
 def test_runtime_error_points_to_umsn_line(tmp_path):
     prog = tmp_path / "오류.umsn"
     write_source(prog, "가 ..은 1\n\n엄!..하가 ..나눠 0..다\n")
-    res = pyumsn_cmd("run", prog)
+    res = pyumsn_cmd(prog)
     stderr = out(res)[1]
     assert res.returncode == 1
     assert 'line 3' in stderr
@@ -82,7 +90,7 @@ def test_runtime_error_points_to_umsn_line(tmp_path):
 def test_python_syntax_error_reported(tmp_path):
     prog = tmp_path / "문법.umsn"
     write_source(prog, "어엄슨 엄슨참\n    엄!..하1..다\n")
-    res = pyumsn_cmd("run", prog)
+    res = pyumsn_cmd(prog)
     stderr = out(res)[1]
     assert res.returncode == 1
     assert "1줄 8칸" in stderr
@@ -92,9 +100,9 @@ def test_python_syntax_error_reported(tmp_path):
 
 def test_temp_file_removed_and_keep():
     before = temp_files()
-    assert pyumsn_cmd("run", EXAMPLES / "구구단.umsn").returncode == 0
+    assert pyumsn_cmd(EXAMPLES / "구구단.umsn").returncode == 0
     assert temp_files() == before
-    res = pyumsn_cmd("run", "--keep", EXAMPLES / "구구단.umsn")
+    res = pyumsn_cmd("--keep", EXAMPLES / "구구단.umsn")
     kept = temp_files() - before
     assert len(kept) == 1
     path = kept.pop()
@@ -105,7 +113,7 @@ def test_temp_file_removed_and_keep():
 def test_import_umsn_module(tmp_path):
     write_source(tmp_path / "계산기.umsn", "엄슨하다 더하기..하가..고 나..다..한\n    엄슨한 가 ..더해 나\n")
     write_source(tmp_path / "메인.umsn", "엄슨가져와 계산기\n엄!..하계산기.더하기..하2..고 3..다..다\n")
-    res = pyumsn_cmd("run", tmp_path / "메인.umsn")
+    res = pyumsn_cmd(tmp_path / "메인.umsn")
     assert res.returncode == 0, out(res)[1]
     assert out(res)[0].strip() == "5"
 
@@ -113,30 +121,32 @@ def test_import_umsn_module(tmp_path):
 def test_topy_and_toumsn_files(tmp_path):
     src = tmp_path / "hello.py"
     write_source(src, 'def greet(name):\n    return f"hi {name}"\n\nprint(greet("엄슨"))\n')
-    assert pyumsn_cmd("toumsn", src).returncode == 0
+    assert pyumsn_cmd("-u", src).returncode == 0
     um = read_source(tmp_path / "hello.umsn")
     assert "엄슨하다" in um
-    assert pyumsn_cmd("topy", tmp_path / "hello.umsn", "-o", tmp_path / "back.py").returncode == 0
+    assert pyumsn_cmd("-t", tmp_path / "hello.umsn", "-o", tmp_path / "back.py").returncode == 0
     assert read_source(tmp_path / "back.py") == read_source(src)
-    res = pyumsn_cmd("run", tmp_path / "hello.umsn")
+    res = pyumsn_cmd(tmp_path / "hello.umsn")
     assert out(res)[0].strip() == "hi 엄슨"
 
 
 def test_topy_stdout_and_directory(tmp_path):
-    res = pyumsn_cmd("topy", EXAMPLES / "구구단.umsn", "-o", "-")
+    res = pyumsn_cmd("-t", EXAMPLES / "구구단.umsn", "-o", "-")
     assert "def 구구단(단):" in out(res)[0]
-    res = pyumsn_cmd("topy", EXAMPLES, "-o", tmp_path / "py")
+    res = pyumsn_cmd("-t", EXAMPLES, "-o", tmp_path / "py")
     assert res.returncode == 0, out(res)[1]
     assert (tmp_path / "py" / "구구단.py").exists()
 
 
 def test_check_and_words():
-    assert pyumsn_cmd("check", EXAMPLES / "안녕.umsn").returncode == 0
-    res = pyumsn_cmd("words", "--search", "print")
+    assert pyumsn_cmd("-n", EXAMPLES / "안녕.umsn").returncode == 0
+    res = pyumsn_cmd("-w", "print")
     assert "엄!" in out(res)[0]
-    res = pyumsn_cmd("words", "--translit", "polyfit")
+    res = pyumsn_cmd("--translit", "polyfit")
     assert "외_피오르야프이트" in out(res)[0]
-    res = pyumsn_cmd("words", "--markdown")
+    res = pyumsn_cmd("--untranslit", "외_피오르야프이트", "엄!")
+    assert "polyfit" in out(res)[0] and "print" in out(res)[0]
+    res = pyumsn_cmd("-M")
     assert "| `엄슨하다` | `def` |" in out(res)[0]
     assert "PyUMSN" in out(pyumsn_cmd("--version"))[0]
 
@@ -146,7 +156,7 @@ def test_utf8_only(tmp_path):
     bad.write_bytes('엄!..하"안녕"..다\n'.encode("cp949"))
     with pytest.raises(UmsnEncodingError):
         read_source(bad)
-    res = pyumsn_cmd("run", bad)
+    res = pyumsn_cmd(bad)
     assert res.returncode == 1
     assert "UTF-8" in out(res)[1]
 
@@ -167,6 +177,77 @@ def test_utf8_only(tmp_path):
     out_file = tmp_path / "out.umsn"
     write_source(out_file, "가 ..은 1\n")
     assert not out_file.read_bytes().startswith(codecs.BOM_UTF8)
+
+
+def test_stdin_and_command():
+    res = pyumsn_cmd(input_text='엄!..하"표준 입력"..다\n')
+    assert res.returncode == 0, out(res)[1]
+    assert out(res)[0].strip() == "표준 입력"
+    code = "엄슨가져와 시스템엄슨\n엄!..하시스템엄슨.인자목록엄슨..다\n"
+    res = pyumsn_cmd("-", "가", input_text=code)
+    assert out(res)[0].strip() == "['-', '가']"
+    res = pyumsn_cmd("-c", code, "가", "-k")
+    assert out(res)[0].strip() == "['-c', '가', '-k']"
+    before = temp_files()
+    res = pyumsn_cmd("-c", "가 ..은 1\n엄!..하가 ..나눠 0..다")
+    stderr = out(res)[1]
+    assert res.returncode == 1
+    assert 'File "<string>", line 2' in stderr
+    assert "엄!..하가 ..나눠 0..다" in stderr
+    assert temp_files() == before
+    assert not glob.glob(os.path.join(tempfile.gettempdir(), "umsn_*.umsn"))
+
+
+def test_filters_stdin_to_stdout():
+    res = pyumsn_cmd("-t", input_text='엄!..하"안녕"..다\n')
+    assert out(res)[0] == 'print("안녕")\n'
+    res = pyumsn_cmd("-u", "-", input_text='print("안녕")\n')
+    assert out(res)[0] == '엄!..하"안녕"..다\n'
+    res = pyumsn_cmd("-ua", input_text='print("안녕")\n')
+    assert out(res)[0] == '엄!("안녕")\n'
+    res = pyumsn_cmd("-n", input_text="count ..은 1\n")
+    assert res.returncode == 1
+    assert "<stdin> 1줄 1칸" in out(res)[1]
+
+
+def test_options_after_operands_and_bundling(tmp_path):
+    # 변환 모드에서는 옵션이 파일 뒤에 와도 된다 (GNU 방식)
+    res = pyumsn_cmd("-t", EXAMPLES / "안녕.umsn", "--output", tmp_path / "a.py")
+    assert res.returncode == 0, out(res)[1]
+    assert "만들었슨" in out(res)[1]
+    res = pyumsn_cmd("-tq", EXAMPLES / "안녕.umsn", EXAMPLES / "구구단.umsn", "-o", tmp_path / "많이")
+    assert res.returncode == 0
+    assert out(res)[1] == ""
+    assert (tmp_path / "많이" / "안녕.py").exists() and (tmp_path / "많이" / "구구단.py").exists()
+    res = pyumsn_cmd("-t", EXAMPLES / "안녕.umsn", "-o" + str(tmp_path / "붙임.py"), "--qui")
+    assert res.returncode == 0 and (tmp_path / "붙임.py").exists()
+    res = pyumsn_cmd("-nq", EXAMPLES)
+    assert res.returncode == 0 and out(res) == ("", "")
+
+
+def test_usage_errors():
+    cases = [
+        (["-x"], "알 수 없는 옵션 -- 'x'"),
+        (["--nope"], "알 수 없는 옵션 '--nope'"),
+        (["-o"], "값이 필요하슨"),
+        (["--to", "a.umsn"], "헷갈리슨"),
+        (["-t", "-u"], "함께 쓸 수 없슨"),
+        (["-k", "-t", "a.umsn"], "'-k'"),
+        (["-o", "x", "a.umsn"], "'-o'"),
+        (["-i", "a.umsn"], "'-i'"),
+        (["--translit"], "바꿀 이름"),
+        (["topy", "a.umsn"], "pyumsn -t"),
+    ]
+    for argv, message in cases:
+        res = pyumsn_cmd(*argv)
+        stderr = out(res)[1]
+        assert res.returncode == 2, (argv, stderr)
+        assert stderr.startswith("pyumsn: "), stderr
+        assert message in stderr, (argv, stderr)
+        assert "pyumsn --help" in stderr
+    res = pyumsn_cmd("-h")
+    assert res.returncode == 0
+    assert out(res)[0].startswith("사용법: pyumsn")
 
 
 def test_examples_translate_and_compile():

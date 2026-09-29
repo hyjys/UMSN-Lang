@@ -4,6 +4,9 @@
 
 임시 파이썬 파일을 원본 ``.umsn`` 파일 이름으로 컴파일해서 실행한다.
 변환 전후 줄 번호가 같으므로 오류 트레이스백이 엄슨 소스 줄을 그대로 보여준다.
+
+환경 변수 ``PYUMSN_SOURCE_NAME`` 이 있으면 ``<원본.umsn>`` 은 ``-c`` 코드나 표준 입력을 담은
+임시 파일이다. 읽자마자 지우고 그 이름(``<string>``, ``<stdin>``)으로 실행한다.
 """
 
 import builtins
@@ -51,6 +54,8 @@ _MAPS = {}
 
 def _position_map(filename):
     """엄슨 파일의 PositionMap (없거나 엄슨 파일이 아니면 None)."""
+    if filename in _MAPS:
+        return _MAPS[filename]
     if not filename.lower().endswith(".umsn"):
         return None
     if filename not in _MAPS:
@@ -161,6 +166,22 @@ def _report(exc, _seen=None, outer=True):
     sys.stderr.flush()
 
 
+def _remove(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _register_source(name, umsn_src):
+    """파일이 없는 엄슨 코드도 추적 기록에 줄과 칸이 보이게 등록한다."""
+    import linecache
+    from .translator import PositionMap
+    lines = umsn_src.splitlines(True)
+    linecache.cache[name] = (len(umsn_src), None, lines, name)
+    _MAPS[name] = PositionMap(umsn_src)
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     if len(argv) < 2:
@@ -173,15 +194,22 @@ def main(argv=None):
     py_path, umsn_path = argv[0], os.path.abspath(argv[1])
     source = read_source(py_path)
     if not os.environ.pop("PYUMSN_KEEP_TEMP", None):
-        try:
-            os.remove(py_path)  # 이미 읽었으니 임시 파일은 바로 지운다
-        except OSError:
-            pass
-    sys.argv = [umsn_path] + argv[2:]
-    if sys.path and sys.path[0] in ("", os.getcwd()):
-        sys.path[0] = os.path.dirname(umsn_path)
+        _remove(py_path)  # 이미 읽었으니 임시 파일은 바로 지운다
+    pseudo = os.environ.pop("PYUMSN_SOURCE_NAME", None)
+    if pseudo:
+        umsn_src = read_source(umsn_path)
+        _remove(umsn_path)
+        _register_source(pseudo, umsn_src)
+        umsn_path = pseudo
+        sys.argv = ["-c" if pseudo == "<string>" else "-"] + argv[2:]
+        search_dir = ""  # python -c / python - 처럼 현재 폴더
     else:
-        sys.path.insert(0, os.path.dirname(umsn_path))
+        sys.argv = [umsn_path] + argv[2:]
+        search_dir = os.path.dirname(umsn_path)
+    if sys.path and sys.path[0] in ("", os.getcwd()):
+        sys.path[0] = search_dir
+    else:
+        sys.path.insert(0, search_dir)
     install()
 
     # 문법 검사는 임시 .py 이름으로 한다: 실제 .umsn 파일 이름을 주면 파이썬이
@@ -195,7 +223,8 @@ def main(argv=None):
 
     keep_alive = sys.modules.get("__main__")  # noqa: F841 (실행 중인 모듈 유지)
     module = types.ModuleType("__main__")
-    module.__file__ = umsn_path
+    if not pseudo:
+        module.__file__ = umsn_path
     module.__builtins__ = builtins
     sys.modules["__main__"] = module
     try:

@@ -1,6 +1,6 @@
 # 엄슨(UMSN) 단어장
 
-`pyumsn words --markdown` 으로 자동 생성한 문서입니다.
+`pyumsn --markdown` 으로 자동 생성한 문서입니다.
 
 ## 예약어
 
